@@ -1,0 +1,40 @@
+name: iOS IPA Derleme (macOS Cloud)
+
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  build-ios:
+    runs-on: macos-latest
+    steps:
+      - name: Depoyu Klonla
+        uses: actions/checkout@v4
+
+      - name: Flutter Kurulumu
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+          cache: true
+
+      - name: Bağımlılıkları Yükle
+        run: flutter pub get
+
+      - name: iOS Sürümünü Derle (No Codesign)
+        run: |
+          flutter build ios --release --no-codesign
+
+      - name: IPA Paketini Oluştur
+        run: |
+          mkdir -p Payload
+          cp -r build/ios/iphoneos/Runner.app Payload/
+          zip -r KO_Apps_TeknikRessam.ipa Payload
+          rm -rf Payload
+
+      - name: IPA Dosyasını Yayınla / Yükle
+        uses: actions/upload-artifact@v4
+        with:
+          name: KO_Apps_TeknikRessam_iOS_IPA
+          path: KO_Apps_TeknikRessam.ipa
+          retention-days: 7

@@ -1,0 +1,1416 @@
+import 'dart:convert';
+import 'dart:io';
+import 'dart:ui' as ui;
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:file_picker/file_picker.dart';
+import 'package:path_provider/path_provider.dart';
+import '../../core/models/user_profile.dart';
+import '../../core/services/local_db_service.dart';
+import '../../core/services/auth_service.dart';
+import '../../core/services/p2p_service.dart';
+import '../../core/services/edevlet_service.dart';
+import '../../core/services/file_launcher_service.dart';
+import '../../core/services/subscription_service.dart';
+import '../../core/theme/app_theme.dart';
+import '../../core/widgets/blueprint_header.dart';
+import '../../core/widgets/subscription_modal.dart';
+
+class CompanyProfileView extends StatefulWidget {
+  final VoidCallback? onProfileSaved;
+
+  const CompanyProfileView({super.key, this.onProfileSaved});
+
+  @override
+  State<CompanyProfileView> createState() => _CompanyProfileViewState();
+}
+
+class _CompanyProfileViewState extends State<CompanyProfileView> {
+  final _formKey = GlobalKey<FormState>();
+  final _localDb = LocalDbService();
+  final _authService = AuthService();
+  final _p2pService = P2PService();
+
+  UserProfile? _companyProfile;
+  bool _isLoading = true;
+
+  String _selectedBranch = 'Çelik Yapı & Konstrüksiyon';
+  final _nameController = TextEditingController();
+  final _contactPersonController = TextEditingController();
+  final _emailController = TextEditingController();
+  final _phoneController = TextEditingController();
+  final _cityController = TextEditingController();
+  final _bioController = TextEditingController();
+  final _taxNumberController = TextEditingController();
+  final _websiteController = TextEditingController();
+
+  String? _avatarPath;
+  String? _avatarBase64;
+  bool _isVerified = false;
+  String? _verificationBadge;
+  bool _isExtractingTaxPlate = false;
+  String? _taxPlateFileName;
+  String? _taxPlateFilePath;
+  String? _taxPlateBarcode;
+  bool _isBarcodeMaskedVisible = false;
+
+  static const List<String> industryBranches = [
+    'Çelik Yapı & Konstrüksiyon',
+    'Betonarme & Statik',
+    'Harita & Altyapı',
+    'Mekanik & Tesisat & HVAC',
+    'Elektrik & Otomasyon',
+    'Mimari & Cephe Çizimi',
+    'Makine & Endüstriyel İmalat',
+    'Genel Mühendislik & Müşavirlik',
+  ];
+
+  @override
+  void initState() {
+    super.initState();
+    _loadProfile();
+  }
+
+  @override
+  void dispose() {
+    _nameController.dispose();
+    _contactPersonController.dispose();
+    _emailController.dispose();
+    _phoneController.dispose();
+    _cityController.dispose();
+    _bioController.dispose();
+    _taxNumberController.dispose();
+    _websiteController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _loadProfile() async {
+    final profile = await _localDb.getUserProfile();
+    if (profile != null) {
+      _companyProfile = profile;
+      _selectedBranch = industryBranches.contains(profile.branch)
+          ? profile.branch
+          : industryBranches.first;
+      _nameController.text = profile.name;
+      _contactPersonController.text = profile.title;
+      _emailController.text = profile.email;
+      _phoneController.text = profile.phone;
+      _cityController.text = profile.city;
+      _bioController.text = profile.bio;
+      _taxNumberController.text = profile.taxNumber ?? '';
+      _taxPlateBarcode = profile.diplomaBarcode ?? profile.taxNumber;
+      _websiteController.text = profile.companyWebsite ?? '';
+      _avatarPath = profile.avatarPath;
+      _avatarBase64 = profile.avatarBase64;
+      final license = await SubscriptionService().getActiveLicense();
+      final hasPaidLicense = license != null && !license.isExpired;
+      _isVerified = hasPaidLicense;
+      _verificationBadge = hasPaidLicense ? license.planName : null;
+    } else {
+      _nameController.clear();
+      _contactPersonController.clear();
+      _emailController.clear();
+      _phoneController.clear();
+      _cityController.clear();
+      _bioController.clear();
+      _taxNumberController.clear();
+      _websiteController.clear();
+      _avatarPath = null;
+      _avatarBase64 = null;
+      _isVerified = false;
+      _verificationBadge = null;
+      _taxPlateBarcode = null;
+      _taxPlateFileName = null;
+      _taxPlateFilePath = null;
+    }
+
+    if (mounted) setState(() => _isLoading = false);
+  }
+
+  Future<String> _compressAvatarBytes(Uint8List bytes) async {
+    try {
+      final codec = await ui.instantiateImageCodec(bytes, targetWidth: 160);
+      final frame = await codec.getNextFrame();
+      final byteData = await frame.image.toByteData(format: ui.ImageByteFormat.png);
+      if (byteData != null) {
+        return base64Encode(byteData.buffer.asUint8List());
+      }
+    } catch (e) {
+      debugPrint('Company logo compression error: $e');
+    }
+    if (bytes.length <= 60 * 1024) {
+      return base64Encode(bytes);
+    }
+    return '';
+  }
+
+  Future<void> _pickAvatar() async {
+    try {
+      final result = await FilePicker.pickFiles(type: FileType.image);
+      if (result.isNotEmpty && result.first.path != null) {
+        final originalFile = File(result.first.path!);
+        final appDir = await getApplicationDocumentsDirectory();
+        final ext = result.first.extension ?? 'jpg';
+        final targetPath = '${appDir.path}/company_logo_${DateTime.now().millisecondsSinceEpoch}.$ext';
+        await originalFile.copy(targetPath);
+
+        final bytes = await originalFile.readAsBytes();
+        final base64Img = await _compressAvatarBytes(bytes);
+
+        setState(() {
+          _avatarPath = targetPath;
+          _avatarBase64 = base64Img;
+        });
+
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              backgroundColor: AppTheme.statusSuccess,
+              content: Text('Şirket logosu başarıyla seçildi.'),
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      debugPrint('Company logo pick error: $e');
+    }
+  }
+
+  Future<void> _pickTaxPlatePdf() async {
+    try {
+      final result = await FilePicker.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: ['pdf'],
+      );
+
+      if (result.isEmpty || result.first.path == null) return;
+      final picked = result.first;
+
+      setState(() => _isExtractingTaxPlate = true);
+
+      final originalFile = File(picked.path!);
+      final bytes = await originalFile.readAsBytes();
+
+      final appDir = await getApplicationDocumentsDirectory();
+      final targetPath = '${appDir.path}/tax_plate_${DateTime.now().millisecondsSinceEpoch}.pdf';
+      await originalFile.copy(targetPath);
+
+      final extraction = await EDevletService.extractFromPdfBytes(bytes);
+
+      if (extraction.success && extraction.barcode != null && extraction.barcode!.isNotEmpty) {
+        setState(() {
+          if (extraction.taxNumber != null && extraction.taxNumber!.isNotEmpty) {
+            _taxNumberController.text = extraction.taxNumber!;
+          }
+          _taxPlateBarcode = extraction.barcode!;
+          _isVerified = false;
+          _verificationBadge = null;
+          _taxPlateFileName = picked.name;
+          _taxPlateFilePath = targetPath;
+        });
+
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              backgroundColor: AppTheme.statusSuccess,
+              duration: const Duration(seconds: 4),
+              content: Row(
+                children: [
+                  const Icon(Icons.verified, color: Colors.white),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      '✓ Vergi Levhası ve Barkod No belgeden otomatik çıkarıldı: ${EDevletService.maskBarcode(extraction.barcode!)}',
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          );
+        }
+      } else {
+        if (mounted) {
+          _showManualTaxPlateDialog(
+            pdfPath: targetPath,
+            pdfName: picked.name,
+            fileSize: bytes.length,
+            reason: extraction.errorMessage,
+          );
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            backgroundColor: AppTheme.statusDanger,
+            content: Text('Belge yükleme hatası: $e'),
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isExtractingTaxPlate = false);
+      }
+    }
+  }
+
+  void _showManualTaxPlateDialog({
+    required String pdfPath,
+    required String pdfName,
+    required int fileSize,
+    String? reason,
+  }) {
+    final vknController = TextEditingController(text: _taxNumberController.text);
+    final barcodeController = TextEditingController(text: _taxPlateBarcode ?? '');
+
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppTheme.blueprintDark,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Row(
+          children: [
+            Icon(Icons.receipt_long, color: AppTheme.cyanLine),
+            SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                'Vergi Levhası Bilgilerini Girin',
+                style: TextStyle(fontSize: 16, color: AppTheme.textLight, fontWeight: FontWeight.bold),
+              ),
+            ),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              reason ?? 'PDF dosyasından bilgiler otomatik okunamadı (Taranmış resim olabilir).',
+              style: const TextStyle(fontSize: 12, color: AppTheme.textMuted),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: vknController,
+              keyboardType: TextInputType.number,
+              maxLength: 10,
+              style: const TextStyle(color: AppTheme.textLight),
+              decoration: const InputDecoration(
+                labelText: 'Vergi Kimlik No (VKN)',
+                hintText: '10 Haneli VKN',
+                counterText: '',
+                prefixIcon: Icon(Icons.pin, color: AppTheme.cyanLine, size: 18),
+              ),
+            ),
+            const SizedBox(height: 10),
+            TextField(
+              controller: barcodeController,
+              textCapitalization: TextCapitalization.characters,
+              style: const TextStyle(fontFamily: 'monospace', letterSpacing: 1.5, color: AppTheme.textLight),
+              decoration: const InputDecoration(
+                labelText: 'Belge Barkod / Doğrulama No',
+                hintText: 'Örn: B2886F454378A2...',
+                prefixIcon: Icon(Icons.qr_code, color: AppTheme.cyanLine, size: 18),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            child: const Text('İptal'),
+            onPressed: () => Navigator.of(ctx).pop(),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppTheme.cyanLine,
+              foregroundColor: AppTheme.blueprintDark,
+            ),
+            child: const Text('Kaydet ve Onayla'),
+            onPressed: () {
+              final vkn = vknController.text.trim();
+              final barcode = barcodeController.text.trim().toUpperCase();
+              if (vkn.length != 10 && barcode.length < 6) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    backgroundColor: AppTheme.statusDanger,
+                    content: Text('Lütfen geçerli 10 haneli VKN veya Barkod Numarası girin.'),
+                  ),
+                );
+                return;
+              }
+              Navigator.of(ctx).pop();
+              setState(() {
+                _taxNumberController.text = vkn;
+                _taxPlateBarcode = barcode.isNotEmpty ? barcode : vkn;
+                _isVerified = false;
+                _verificationBadge = null;
+                _taxPlateFileName = pdfName;
+                _taxPlateFilePath = pdfPath;
+              });
+
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  backgroundColor: AppTheme.statusSuccess,
+                  content: Text('✓ Vergi levhası kaydedildi: ${EDevletService.maskBarcode(_taxPlateBarcode!)}'),
+                ),
+              );
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _removeTaxPlate() {
+    setState(() {
+      _taxNumberController.clear();
+      _taxPlateBarcode = null;
+      _isVerified = false;
+      _verificationBadge = null;
+      _taxPlateFileName = null;
+      _taxPlateFilePath = null;
+      _isBarcodeMaskedVisible = false;
+    });
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        backgroundColor: AppTheme.blueprintSurface,
+        content: Text('Vergi levhası ve kurumsal onay kaldırıldı.'),
+      ),
+    );
+  }
+
+  Future<void> _openTaxPlatePdf() async {
+    if (_taxPlateFilePath != null && File(_taxPlateFilePath!).existsSync()) {
+      await FileLauncherService.openFile(_taxPlateFilePath!);
+      return;
+    }
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          backgroundColor: AppTheme.statusDanger,
+          content: Text('Vergi levhası PDF belgesi cihazda bulunamadı.'),
+        ),
+      );
+    }
+  }
+
+  Future<void> _saveProfile() async {
+    if (!_formKey.currentState!.validate()) return;
+    setState(() => _isLoading = true);
+
+    if (_companyProfile == null) {
+      final authRes = await _authService.signInWithLocalDID(
+        name: _nameController.text.trim(),
+        role: 'company',
+        branch: _selectedBranch,
+        email: _emailController.text.trim(),
+        phone: _phoneController.text.trim(),
+        city: _cityController.text.trim(),
+      );
+
+      if (authRes.isSuccess && authRes.profile != null) {
+        _companyProfile = authRes.profile;
+      }
+    }
+
+    if (_companyProfile != null) {
+      final updated = _companyProfile!.copyWith(
+        name: _nameController.text.trim(),
+        role: 'company',
+        branch: _selectedBranch,
+        title: _contactPersonController.text.trim(),
+        email: _emailController.text.trim(),
+        phone: _phoneController.text.trim(),
+        city: _cityController.text.trim(),
+        bio: _bioController.text.trim(),
+        avatarPath: _avatarPath,
+        avatarBase64: _avatarBase64,
+        isVerified: _isVerified,
+        verificationBadge: _verificationBadge,
+        taxNumber: _taxNumberController.text.trim(),
+        diplomaBarcode: _taxPlateBarcode ?? _companyProfile?.diplomaBarcode,
+        companyWebsite: _websiteController.text.trim(),
+        updatedAt: DateTime.now(),
+      );
+
+      await _localDb.saveUserProfile(updated);
+      _companyProfile = updated;
+
+      await _p2pService.start(userProfile: updated);
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            backgroundColor: AppTheme.statusSuccess,
+            content: Text('Şirket profiliniz yerel şifrelendi ve P2P ağına bağlandı.'),
+          ),
+        );
+        widget.onProfileSaved?.call();
+      }
+    }
+
+    if (mounted) setState(() => _isLoading = false);
+  }
+
+  Future<void> _signOut() async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppTheme.blueprintDark,
+        title: const Text('Hesaptan Çıkış Yap', style: TextStyle(color: AppTheme.textLight)),
+        content: const Text(
+          'Şirket hesabınızdan çıkış yapmak istediğinize emin misiniz? Şirket bilgileriniz cihazda korunacak ancak oturum sonlandırılacaktır.',
+          style: TextStyle(color: AppTheme.textMuted),
+        ),
+        actions: [
+          TextButton(
+            child: const Text('İptal'),
+            onPressed: () => Navigator.of(ctx).pop(false),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppTheme.amberSteel,
+              foregroundColor: AppTheme.blueprintDark,
+            ),
+            child: const Text('Çıkış Yap'),
+            onPressed: () => Navigator.of(ctx).pop(true),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm == true) {
+      await _p2pService.dispose();
+      await _localDb.setLoggedIn(false);
+      widget.onProfileSaved?.call();
+    }
+  }
+
+  Future<void> _deleteAccount() async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppTheme.blueprintDark,
+        title: const Text('Şirket Profilini ve Verileri Sil', style: TextStyle(color: AppTheme.statusDanger)),
+        content: const Text(
+          'DİKKAT: Şirket profiliniz, kimlik anahtarlarınız ve gönderilen tüm iş teklifleri bu cihazdan kalıcı olarak silinecektir.',
+          style: TextStyle(color: AppTheme.textMuted),
+        ),
+        actions: [
+          TextButton(
+            child: const Text('İptal'),
+            onPressed: () => Navigator.of(ctx).pop(false),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppTheme.statusDanger,
+              foregroundColor: Colors.white,
+            ),
+            child: const Text('Kalıcı Olarak Sil'),
+            onPressed: () => Navigator.of(ctx).pop(true),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm == true) {
+      await _p2pService.dispose();
+      await _localDb.deleteUserProfile();
+      await _localDb.clearAllOffers();
+      widget.onProfileSaved?.call();
+    }
+  }
+
+  Widget _buildAvatarCard() {
+    ImageProvider? imageProvider;
+    if (_avatarPath != null && File(_avatarPath!).existsSync()) {
+      imageProvider = FileImage(File(_avatarPath!));
+    } else if (_avatarBase64 != null && _avatarBase64!.isNotEmpty) {
+      try {
+        imageProvider = MemoryImage(base64Decode(_avatarBase64!));
+      } catch (_) {}
+    }
+
+    return Center(
+      child: Column(
+        children: [
+          Stack(
+            children: [
+              Container(
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  border: Border.all(color: AppTheme.amberSteel, width: 2.5),
+                  boxShadow: [
+                    BoxShadow(
+                      color: AppTheme.amberSteel.withValues(alpha: 0.25),
+                      blurRadius: 16,
+                      spreadRadius: 2,
+                    ),
+                  ],
+                ),
+                child: CircleAvatar(
+                  radius: 46,
+                  backgroundColor: AppTheme.blueprintSurface,
+                  backgroundImage: imageProvider,
+                  child: imageProvider == null
+                      ? const Icon(Icons.business_center_outlined, size: 48, color: AppTheme.amberSteel)
+                      : null,
+                ),
+              ),
+              Positioned(
+                bottom: 0,
+                right: 0,
+                child: InkWell(
+                  onTap: _pickAvatar,
+                  borderRadius: BorderRadius.circular(20),
+                  child: Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: AppTheme.amberSteel,
+                      shape: BoxShape.circle,
+                      border: Border.all(color: AppTheme.blueprintDark, width: 2),
+                    ),
+                    child: const Icon(Icons.camera_alt, size: 18, color: AppTheme.blueprintDark),
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Text(
+            _nameController.text.isEmpty ? 'Şirket Logosu Ekle' : _nameController.text,
+            style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: AppTheme.textLight),
+            textAlign: TextAlign.center,
+          ),
+          Text(
+            'Logoyu değiştirmek için kamera simgesine dokunun',
+            style: TextStyle(fontSize: 11, color: AppTheme.textMuted.withValues(alpha: 0.8)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildVerificationCard() {
+    final hasTaxPlate = (_taxPlateBarcode != null && _taxPlateBarcode!.isNotEmpty) ||
+        _taxNumberController.text.trim().isNotEmpty;
+    final displayBarcode = (_taxPlateBarcode != null && _taxPlateBarcode!.isNotEmpty)
+        ? _taxPlateBarcode!
+        : _taxNumberController.text.trim();
+
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: AppTheme.blueprintSurface,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(
+          color: hasTaxPlate ? AppTheme.cyanLine.withValues(alpha: 0.8) : AppTheme.steelBorder,
+          width: 1.5,
+        ),
+        boxShadow: hasTaxPlate
+            ? [
+                BoxShadow(
+                  color: AppTheme.cyanLine.withValues(alpha: 0.08),
+                  blurRadius: 10,
+                  offset: const Offset(0, 3),
+                )
+              ]
+            : null,
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(
+                hasTaxPlate ? Icons.description_outlined : Icons.description_outlined,
+                color: hasTaxPlate ? AppTheme.cyanLine : AppTheme.textMuted,
+                size: 22,
+              ),
+              const SizedBox(width: 8),
+              const Expanded(
+                child: Text(
+                  'e-Devlet / GİB Barkodlu Vergi Levhası (PDF)',
+                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: AppTheme.textLight),
+                ),
+              ),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                decoration: BoxDecoration(
+                  color: hasTaxPlate
+                      ? AppTheme.statusSuccess.withValues(alpha: 0.15)
+                      : AppTheme.steelBorder.withValues(alpha: 0.3),
+                  borderRadius: BorderRadius.circular(6),
+                  border: Border.all(
+                    color: hasTaxPlate
+                        ? AppTheme.statusSuccess.withValues(alpha: 0.6)
+                        : AppTheme.steelBorder,
+                  ),
+                ),
+                child: Text(
+                  hasTaxPlate ? '✓ BELGE EKLENDİ' : 'BELGE BEKLENİYOR',
+                  style: TextStyle(
+                    color: hasTaxPlate ? AppTheme.statusSuccess : AppTheme.textMuted,
+                    fontSize: 10,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+
+          if (!hasTaxPlate) ...[
+            const Text(
+              'e-Devlet veya İnteraktif Vergi Dairesi\'nden indirdiğiniz resmi Barkodlu Vergi Levhanızı (PDF) yükleyin. Sistem VKN ve Belge Barkod Numarasını otomatik ayıklar, güvenli maske altında saklar ve adayların resmi GİB portalında doğrulayabilmesini sağlar.',
+              style: TextStyle(color: AppTheme.textMuted, fontSize: 11.5, height: 1.35),
+            ),
+            const SizedBox(height: 14),
+            Row(
+              children: [
+                Expanded(
+                  child: ElevatedButton.icon(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppTheme.cyanLine,
+                      foregroundColor: AppTheme.blueprintDark,
+                      padding: const EdgeInsets.symmetric(vertical: 13),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                    ),
+                    icon: _isExtractingTaxPlate
+                        ? const SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(strokeWidth: 2, color: AppTheme.blueprintDark),
+                          )
+                        : const Icon(Icons.picture_as_pdf, size: 18),
+                    label: Text(
+                      _isExtractingTaxPlate ? 'Bilgiler Ayıklanıyor...' : 'Barkodlu Vergi Levhası Seç (PDF)',
+                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12),
+                    ),
+                    onPressed: _isExtractingTaxPlate ? null : _pickTaxPlatePdf,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 6),
+            Align(
+              alignment: Alignment.centerRight,
+              child: TextButton(
+                onPressed: () => _showManualTaxPlateDialog(
+                  pdfPath: '',
+                  pdfName: 'Vergi Levhası',
+                  fileSize: 0,
+                  reason: 'Vergi numaranızı ve barkodunuzu vergi levhanıza bakarak manuel girebilirsiniz.',
+                ),
+                style: TextButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                  minimumSize: Size.zero,
+                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                ),
+                child: const Text(
+                  'veya Bilgileri Manuel Gir',
+                  style: TextStyle(fontSize: 11, color: AppTheme.cyanLine),
+                ),
+              ),
+            ),
+          ] else ...[
+            Row(
+              children: [
+                const Icon(Icons.business, size: 16, color: AppTheme.cyanLine),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(
+                    _verificationBadge ?? 'GİB Barkodlu Vergi Levhası',
+                    style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: AppTheme.cyanLine),
+                  ),
+                ),
+                if (_taxPlateFileName != null)
+                  Text(
+                    _taxPlateFileName!,
+                    style: const TextStyle(fontSize: 11, color: AppTheme.textMuted),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+              ],
+            ),
+            if (_taxNumberController.text.isNotEmpty) ...[
+              const SizedBox(height: 6),
+              Text(
+                'Kayıtlı VKN: ${_taxNumberController.text}',
+                style: const TextStyle(fontSize: 12, color: AppTheme.textLight),
+              ),
+            ],
+            const SizedBox(height: 10),
+
+            // Maskelenmiş Barkod Kutusu
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              decoration: BoxDecoration(
+                color: AppTheme.blueprintDark,
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: AppTheme.cyanLine.withValues(alpha: 0.4)),
+              ),
+              child: Row(
+                children: [
+                  const Icon(Icons.qr_code_scanner, color: AppTheme.cyanLine, size: 20),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text(
+                          'VERGİ LEVHASI BARKOD NO (GÜVENLİ MASKE):',
+                          style: TextStyle(fontSize: 9, color: AppTheme.textMuted, letterSpacing: 0.5),
+                        ),
+                        const SizedBox(height: 3),
+                        Text(
+                          _isBarcodeMaskedVisible
+                              ? displayBarcode
+                              : EDevletService.maskBarcode(displayBarcode),
+                          style: const TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.bold,
+                            letterSpacing: 1.5,
+                            fontFamily: 'monospace',
+                            color: AppTheme.textLight,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  IconButton(
+                    icon: Icon(
+                      _isBarcodeMaskedVisible ? Icons.visibility_off : Icons.visibility,
+                      color: AppTheme.textMuted,
+                      size: 20,
+                    ),
+                    tooltip: _isBarcodeMaskedVisible ? 'Barkodu Gizle' : 'Barkodu Göster',
+                    onPressed: () {
+                      setState(() {
+                        _isBarcodeMaskedVisible = !_isBarcodeMaskedVisible;
+                      });
+                    },
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 12),
+
+            // İşlem Butonları
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                ElevatedButton.icon(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppTheme.cyanLine,
+                    foregroundColor: AppTheme.blueprintDark,
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+                  ),
+                  icon: const Icon(Icons.copy, size: 15),
+                  label: const Text('Kopyala', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 11)),
+                  onPressed: () => EDevletService.copyToClipboard(context, displayBarcode),
+                ),
+                OutlinedButton.icon(
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: AppTheme.cyanLine,
+                    side: BorderSide(color: AppTheme.cyanLine.withValues(alpha: 0.6)),
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+                  ),
+                  icon: const Icon(Icons.open_in_browser, size: 15),
+                  label: const Text('e-Devlet / GİB\'de Doğrula', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 11)),
+                  onPressed: () => EDevletService.openOfficialVerificationPortal(context, barcode: displayBarcode),
+                ),
+                if (_taxPlateFilePath != null)
+                  TextButton.icon(
+                    style: TextButton.styleFrom(
+                      foregroundColor: AppTheme.textLight,
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
+                    ),
+                    icon: const Icon(Icons.picture_as_pdf, size: 15),
+                    label: const Text('Belgeyi Aç', style: TextStyle(fontSize: 11)),
+                    onPressed: _openTaxPlatePdf,
+                  ),
+                TextButton.icon(
+                  style: TextButton.styleFrom(
+                    foregroundColor: AppTheme.cyanLine,
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 9),
+                  ),
+                  icon: const Icon(Icons.change_circle_outlined, size: 15),
+                  label: const Text('Değiştir', style: TextStyle(fontSize: 11)),
+                  onPressed: _pickTaxPlatePdf,
+                ),
+                TextButton.icon(
+                  style: TextButton.styleFrom(
+                    foregroundColor: AppTheme.statusDanger,
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 9),
+                  ),
+                  icon: const Icon(Icons.delete_outline, size: 15),
+                  label: const Text('Kaldır', style: TextStyle(fontSize: 11)),
+                  onPressed: _removeTaxPlate,
+                ),
+              ],
+            ),
+          ],
+          const SizedBox(height: 14),
+          const Divider(),
+          const SizedBox(height: 6),
+          TextFormField(
+            controller: _websiteController,
+            decoration: const InputDecoration(
+              labelText: 'Kurumsal Web Sitesi',
+              hintText: 'www.sirketiniz.com',
+              prefixIcon: Icon(Icons.language, color: AppTheme.cyanLine, size: 18),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_isLoading) {
+      return const Scaffold(
+        appBar: BlueprintHeader(title: 'Şirket Profili'),
+        body: Center(child: CircularProgressIndicator()),
+      );
+    }
+
+    return Scaffold(
+      appBar: BlueprintHeader(
+        title: 'İşveren Şirket Profili',
+        trailing: IconButton(
+          icon: const Icon(Icons.workspace_premium, color: AppTheme.amberSteel),
+          tooltip: 'Kurumsal Abonelik',
+          onPressed: () => SubscriptionModal.show(context),
+        ),
+      ),
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.all(16),
+        child: Form(
+          key: _formKey,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              _buildAvatarCard(),
+              const SizedBox(height: 18),
+              _buildCompanySubscriptionBanner(),
+              const SizedBox(height: 16),
+              _buildCryptoIdentityCard(),
+              const SizedBox(height: 8),
+              _buildRestoreAccountBanner(),
+              const SizedBox(height: 16),
+              _buildVerificationCard(),
+              const SizedBox(height: 20),
+
+              const Text(
+                'Şirketinizin Faaliyet Alanı (Ana Branş)',
+                style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: AppTheme.cyanLine),
+              ),
+              const SizedBox(height: 8),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 14),
+                decoration: BoxDecoration(
+                  color: AppTheme.blueprintSurface,
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: AppTheme.steelBorder),
+                ),
+                child: DropdownButtonHideUnderline(
+                  child: DropdownButton<String>(
+                    value: _selectedBranch,
+                    isExpanded: true,
+                    dropdownColor: AppTheme.blueprintSurface,
+                    style: const TextStyle(color: AppTheme.textLight, fontSize: 14),
+                    items: industryBranches.map((b) {
+                      return DropdownMenuItem(value: b, child: Text(b));
+                    }).toList(),
+                    onChanged: (val) {
+                      if (val != null) setState(() => _selectedBranch = val);
+                    },
+                  ),
+                ),
+              ),
+              const SizedBox(height: 16),
+
+              TextFormField(
+                controller: _nameController,
+                decoration: const InputDecoration(
+                  labelText: 'Şirket Resmi Ünvanı / Adı',
+                  prefixIcon: Icon(Icons.business, color: AppTheme.cyanLine),
+                ),
+                validator: (val) => val == null || val.isEmpty ? 'Gereklidir' : null,
+              ),
+              const SizedBox(height: 14),
+
+              TextFormField(
+                controller: _contactPersonController,
+                decoration: const InputDecoration(
+                  labelText: 'Yetkili İsim / Pozisyon',
+                  hintText: 'Örn: Mehmet Öz - Proje Müdürü',
+                  prefixIcon: Icon(Icons.person_pin, color: AppTheme.cyanLine),
+                ),
+              ),
+              const SizedBox(height: 14),
+
+              Row(
+                children: [
+                  Expanded(
+                    child: TextFormField(
+                      controller: _cityController,
+                      decoration: const InputDecoration(
+                        labelText: 'Merkez Şehir',
+                        prefixIcon: Icon(Icons.location_city, color: AppTheme.cyanLine),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: TextFormField(
+                      controller: _phoneController,
+                      decoration: const InputDecoration(
+                        labelText: 'Kurumsal Telefon',
+                        prefixIcon: Icon(Icons.phone_outlined, color: AppTheme.cyanLine),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 14),
+
+              TextFormField(
+                controller: _emailController,
+                decoration: const InputDecoration(
+                  labelText: 'İletişim E-Postası (Adayların size ulaşacağı adres)',
+                  prefixIcon: Icon(Icons.email_outlined, color: AppTheme.cyanLine),
+                ),
+              ),
+              const SizedBox(height: 14),
+
+              TextFormField(
+                controller: _bioController,
+                maxLines: 3,
+                decoration: const InputDecoration(
+                  labelText: 'Şirket Tanıtımı & Proje Portföyü',
+                  hintText: 'Taahhüt ettiğiniz çelik imalat, betonarme yapı veya altyapı projeleri...',
+                ),
+              ),
+              const SizedBox(height: 24),
+
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton.icon(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppTheme.amberSteel,
+                    foregroundColor: AppTheme.blueprintDark,
+                    padding: const EdgeInsets.symmetric(vertical: 16),
+                  ),
+                  icon: const Icon(Icons.shield_outlined),
+                  label: const Text(
+                    'ŞİRKET BİLGİLERİNİ GÜNCELLE & KAYDET',
+                    style: TextStyle(fontWeight: FontWeight.bold, letterSpacing: 0.5),
+                  ),
+                  onPressed: _saveProfile,
+                ),
+              ),
+              if (_companyProfile != null) ...[
+                const SizedBox(height: 16),
+                SizedBox(
+                  width: double.infinity,
+                  child: OutlinedButton.icon(
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: AppTheme.amberSteel,
+                      side: const BorderSide(color: AppTheme.amberSteel),
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                    ),
+                    icon: const Icon(Icons.logout),
+                    label: const Text('HESAPTAN ÇIKIŞ YAP'),
+                    onPressed: _signOut,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                SizedBox(
+                  width: double.infinity,
+                  child: OutlinedButton.icon(
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: AppTheme.statusDanger,
+                      side: const BorderSide(color: AppTheme.statusDanger),
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                    ),
+                    icon: const Icon(Icons.delete_forever),
+                    label: const Text('ŞİRKET PROFİLİNİ VE VERİLERİ SİL (SIFIRLA)'),
+                    onPressed: _deleteAccount,
+                  ),
+                ),
+              ],
+              const SizedBox(height: 30),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildCompanySubscriptionBanner() {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: AppTheme.blueprintSurface,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: AppTheme.amberSteel.withValues(alpha: 0.6)),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.workspace_premium, color: AppTheme.amberSteel, size: 36),
+          const SizedBox(width: 14),
+          const Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Doğrulanmış Şirket Avantajları',
+                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: AppTheme.amberSteel),
+                ),
+                SizedBox(height: 4),
+                Text(
+                  'Ressamlara sınırsız P2P şifreli teklif gönderin ve portföy çizimlerine doğrudan erişin.',
+                  style: TextStyle(color: AppTheme.textMuted, fontSize: 12),
+                ),
+              ],
+            ),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppTheme.amberSteel,
+              foregroundColor: AppTheme.blueprintDark,
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            ),
+            onPressed: () => SubscriptionModal.show(context),
+            child: const Text('Paketler', style: TextStyle(fontSize: 12)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildCryptoIdentityCard() {
+    final pubKey = _companyProfile?.publicKey ?? 'Oluşturuluyor...';
+    final did = _companyProfile?.id ?? 'did:ko:comp:initial';
+
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: AppTheme.blueprintSurface,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: AppTheme.amberSteel.withValues(alpha: 0.4)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.lock_clock_outlined, color: AppTheme.amberSteel, size: 20),
+              const SizedBox(width: 8),
+              const Expanded(
+                child: Text(
+                  'Zero-Server Kurumsal Kripto Kimlik (DID)',
+                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: AppTheme.amberSteel),
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              const SizedBox(width: 8),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                decoration: BoxDecoration(
+                  color: AppTheme.statusSuccess.withValues(alpha: 0.2),
+                  borderRadius: BorderRadius.circular(4),
+                ),
+                child: const Text(
+                  'GİZLİ & ŞİFRELİ',
+                  style: TextStyle(color: AppTheme.statusSuccess, fontSize: 9, fontWeight: FontWeight.bold),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'Şirket P2P Açık Anahtarı: $did',
+            style: const TextStyle(fontSize: 11, fontFamily: 'monospace', color: AppTheme.textMuted),
+            overflow: TextOverflow.ellipsis,
+          ),
+          const SizedBox(height: 6),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.end,
+            children: [
+              InkWell(
+                onTap: () {
+                  Clipboard.setData(ClipboardData(text: pubKey));
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('Açık anahtar panoya kopyalandı.')),
+                  );
+                },
+                child: const Padding(
+                  padding: EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.copy, size: 12, color: AppTheme.cyanLine),
+                      SizedBox(width: 4),
+                      Text('Açık Anahtar', style: TextStyle(color: AppTheme.cyanLine, fontSize: 11)),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(width: 12),
+              InkWell(
+                onTap: _showSecretKeyDialog,
+                child: const Padding(
+                  padding: EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.vpn_key_rounded, size: 12, color: AppTheme.amberSteel),
+                      SizedBox(width: 4),
+                      Text('Kurtarma Anahtarı (Yedekle)', style: TextStyle(color: AppTheme.amberSteel, fontSize: 11, fontWeight: FontWeight.bold)),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showSecretKeyDialog() {
+    final privKey = _companyProfile?.privateKey ?? '';
+    if (privKey.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Kurtarma anahtarı henüz oluşturulmadı. Önce profili kaydedin.')),
+      );
+      return;
+    }
+
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppTheme.blueprintDark,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+          side: const BorderSide(color: AppTheme.amberSteel, width: 1.5),
+        ),
+        title: const Row(
+          children: [
+            Icon(Icons.vpn_key_rounded, color: AppTheme.amberSteel),
+            SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                'Şirket Gizli Kurtarma Anahtarı',
+                style: TextStyle(color: AppTheme.textLight, fontSize: 16, fontWeight: FontWeight.bold),
+              ),
+            ),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              '⚠️ Bu anahtar şirket hesabınızın sahibini kanıtlayan tek şifredir!\n\nUygulamayı silseniz veya cihaz değiştirseniz dahi, bu 64 haneli anahtarı yapıştırarak şirket profilinizi ve aboneliğinizi anında geri yükleyebilirsiniz.',
+              style: TextStyle(fontSize: 13, color: AppTheme.textMuted, height: 1.4),
+            ),
+            const SizedBox(height: 14),
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: AppTheme.blueprintSurface,
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: AppTheme.amberSteel.withValues(alpha: 0.5)),
+              ),
+              child: SelectableText(
+                privKey,
+                style: const TextStyle(fontFamily: 'monospace', fontSize: 11, color: AppTheme.amberSteel),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('Kapat', style: TextStyle(color: AppTheme.textMuted)),
+          ),
+          ElevatedButton.icon(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppTheme.amberSteel,
+              foregroundColor: AppTheme.blueprintDark,
+            ),
+            icon: const Icon(Icons.copy, size: 16),
+            label: const Text('Anahtarı Kopyala', style: TextStyle(fontWeight: FontWeight.bold)),
+            onPressed: () {
+              Clipboard.setData(ClipboardData(text: privKey));
+              Navigator.of(ctx).pop();
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  backgroundColor: AppTheme.statusSuccess,
+                  content: Text('✓ Şirket kurtarma anahtarı panoya kopyalandı. Güvenli bir yere kaydedin!'),
+                ),
+              );
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showRestoreAccountDialog() {
+    final keyController = TextEditingController();
+    bool isRestoring = false;
+
+    showDialog(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialogState) => AlertDialog(
+          backgroundColor: AppTheme.blueprintDark,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+            side: const BorderSide(color: AppTheme.amberSteel, width: 1.5),
+          ),
+          title: const Row(
+            children: [
+              Icon(Icons.settings_backup_restore, color: AppTheme.amberSteel),
+              SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  'Şirket Hesabını Geri Yükle',
+                  style: TextStyle(color: AppTheme.textLight, fontSize: 16, fontWeight: FontWeight.bold),
+                ),
+              ),
+            ],
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'Daha önce yedeklediğiniz 64 haneli Şirket Kurtarma Anahtarınızı (Private Key) aşağıya yapıştırın:',
+                style: TextStyle(fontSize: 13, color: AppTheme.textMuted, height: 1.4),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: keyController,
+                maxLines: 2,
+                style: const TextStyle(fontFamily: 'monospace', fontSize: 12, color: AppTheme.amberSteel),
+                decoration: const InputDecoration(
+                  hintText: '64 karakterli hex anahtar...',
+                  labelText: 'Şirket Kurtarma Anahtarı',
+                  prefixIcon: Icon(Icons.key, color: AppTheme.amberSteel),
+                ),
+              ),
+              if (isRestoring) ...[
+                const SizedBox(height: 16),
+                const Center(
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: AppTheme.amberSteel)),
+                      SizedBox(width: 10),
+                      Text('Nostr ağından şirket profili aranıyor...', style: TextStyle(fontSize: 12, color: AppTheme.amberSteel)),
+                    ],
+                  ),
+                ),
+              ],
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(),
+              child: const Text('İptal', style: TextStyle(color: AppTheme.textMuted)),
+            ),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppTheme.amberSteel,
+                foregroundColor: AppTheme.blueprintDark,
+              ),
+              onPressed: isRestoring
+                  ? null
+                  : () async {
+                      final input = keyController.text.trim();
+                      if (input.isEmpty) return;
+                      setDialogState(() => isRestoring = true);
+
+                      final res = await _authService.restoreWithPrivateKey(
+                        privateKey: input,
+                        role: 'company',
+                      );
+
+                      if (!ctx.mounted || !mounted) return;
+                      Navigator.of(ctx).pop();
+
+                      if (res.isSuccess && res.profile != null) {
+                        final lic = await SubscriptionService().restoreLicenseFromNostr(res.profile!);
+                        if (!mounted) return;
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                            backgroundColor: AppTheme.statusSuccess,
+                            content: Text(
+                              lic != null
+                                  ? '✓ Hoş geldiniz! ${res.profile!.name} şirketi ve aktif abonelik lisansı başarıyla geri yüklendi.'
+                                  : '✓ Hoş geldiniz! ${res.profile!.name} şirketi başarıyla geri yüklendi.',
+                            ),
+                          ),
+                        );
+                        await _loadProfile();
+                        await _p2pService.start(userProfile: res.profile!);
+                        widget.onProfileSaved?.call();
+                      } else {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                            backgroundColor: AppTheme.statusDanger,
+                            content: Text(res.errorMessage ?? 'Geri yükleme başarısız.'),
+                          ),
+                        );
+                      }
+                    },
+              child: const Text('GERİ YÜKLE & GİRİŞ YAP', style: TextStyle(fontWeight: FontWeight.bold)),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildRestoreAccountBanner() {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: AppTheme.amberSteel.withValues(alpha: 0.1),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: AppTheme.amberSteel.withValues(alpha: 0.3)),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.settings_backup_restore, color: AppTheme.amberSteel, size: 18),
+          const SizedBox(width: 8),
+          const Expanded(
+            child: Text(
+              'Uygulamayı yeniden mi kurdunuz? Eski şirket hesabınızı geri yükleyin.',
+              style: TextStyle(fontSize: 11, color: AppTheme.textLight),
+            ),
+          ),
+          TextButton(
+            onPressed: _showRestoreAccountDialog,
+            style: TextButton.styleFrom(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              minimumSize: Size.zero,
+              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            ),
+            child: const Text(
+              'Geri Yükle',
+              style: TextStyle(color: AppTheme.amberSteel, fontWeight: FontWeight.bold, fontSize: 11),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}

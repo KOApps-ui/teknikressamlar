@@ -1,0 +1,38 @@
+name: Build iOS Simulator for Appetize
+
+on:
+  push:
+    branches: [ simulator-builder ]
+  workflow_dispatch:
+
+jobs:
+  build-simulator:
+    runs-on: macos-latest
+    steps:
+      - name: Depoyu Klonla
+        uses: actions/checkout@v4
+
+      - name: Flutter Kurulumu
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+          cache: true
+
+      - name: Bağımlılıkları Yükle
+        run: flutter pub get
+
+      - name: iOS Simülatör Sürümünü Derle
+        run: |
+          flutter build ios --simulator
+
+      - name: Simulator Paketini Zip Yap
+        run: |
+          cd build/ios/iphonesimulator
+          zip -r -q "$GITHUB_WORKSPACE/KO_Apps_TeknikRessam_Simulator.zip" Runner.app
+
+      - name: Appetize Simulator Zip Yükle
+        uses: actions/upload-artifact@v4
+        with:
+          name: Appetize_Simulator_ZIP
+          path: KO_Apps_TeknikRessam_Simulator.zip
+          retention-days: 7

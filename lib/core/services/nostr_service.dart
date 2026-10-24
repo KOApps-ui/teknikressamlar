@@ -95,16 +95,48 @@ class NostrService {
   final Set<String> _deletedCandidateIds = {};
   final Map<String, Completer<String?>> _pendingFileCompleters = {};
 
-  final _draftsmenController = StreamController<List<Map<String, dynamic>>>.broadcast();
-  final _incomingOfferController = StreamController<OfferModel>.broadcast();
-  final _offerResponseController = StreamController<Map<String, dynamic>>.broadcast();
-  final _connectionStatusController = StreamController<String>.broadcast();
+  StreamController<List<Map<String, dynamic>>> _draftsmenController =
+      StreamController<List<Map<String, dynamic>>>.broadcast();
+  StreamController<OfferModel> _incomingOfferController =
+      StreamController<OfferModel>.broadcast();
+  StreamController<Map<String, dynamic>> _offerResponseController =
+      StreamController<Map<String, dynamic>>.broadcast();
+  StreamController<String> _connectionStatusController =
+      StreamController<String>.broadcast();
 
   Stream<List<Map<String, dynamic>>> get discoveredDraftsmenStream => _draftsmenController.stream;
   List<Map<String, dynamic>> get discoveredDraftsmen => _discoveredDraftsmen.values.toList();
   Stream<OfferModel> get incomingOfferStream => _incomingOfferController.stream;
   Stream<Map<String, dynamic>> get offerResponseStream => _offerResponseController.stream;
   Stream<String> get connectionStatusStream => _connectionStatusController.stream;
+
+  void _safeAddConnectionStatus(String status) {
+    if (_connectionStatusController.isClosed) {
+      _connectionStatusController = StreamController<String>.broadcast();
+    }
+    _connectionStatusController.add(status);
+  }
+
+  void _safeAddDraftsmen(List<Map<String, dynamic>> list) {
+    if (_draftsmenController.isClosed) {
+      _draftsmenController = StreamController<List<Map<String, dynamic>>>.broadcast();
+    }
+    _draftsmenController.add(list);
+  }
+
+  void _safeAddOffer(OfferModel offer) {
+    if (_incomingOfferController.isClosed) {
+      _incomingOfferController = StreamController<OfferModel>.broadcast();
+    }
+    _incomingOfferController.add(offer);
+  }
+
+  void _safeAddResponse(Map<String, dynamic> response) {
+    if (_offerResponseController.isClosed) {
+      _offerResponseController = StreamController<Map<String, dynamic>>.broadcast();
+    }
+    _offerResponseController.add(response);
+  }
 
   bool get isConnected => _activeRelays.isNotEmpty;
   int get activeRelaysCount => _activeRelays.length;
@@ -117,7 +149,7 @@ class NostrService {
 
   void clearDiscoveredDraftsmen() {
     _discoveredDraftsmen.clear();
-    _draftsmenController.add([]);
+    _safeAddDraftsmen([]);
     debugPrint('All discovered draftsmen cleared from memory and stream.');
   }
 
@@ -125,9 +157,7 @@ class NostrService {
     _deletedCandidateIds.add(peerId);
     _discoveredDraftsmen.remove(peerId);
     await _localDb.addDeletedCandidate(peerId);
-    if (!_draftsmenController.isClosed) {
-      _draftsmenController.add(_discoveredDraftsmen.values.toList());
-    }
+    _safeAddDraftsmen(_discoveredDraftsmen.values.toList());
     debugPrint('Candidate $peerId permanently removed from discovered list.');
   }
 
@@ -180,20 +210,25 @@ class NostrService {
     final savedDeleted = await _localDb.getDeletedCandidates();
     _deletedCandidateIds.addAll(savedDeleted);
 
-    _connectionStatusController.add('Nostr Ağına Bağlanılıyor...');
+    _safeAddConnectionStatus('Nostr Ağına Bağlanılıyor...');
 
     // 1. Start Local LAN Direct Engine (Instant sub-1ms Wi-Fi discovery & transfer)
     await _startLanEngine();
 
-    // 2. Connect to Nostr Decentralized Relay Pool
-    await _connectToRelayPool();
+    // 2. Connect to Nostr Decentralized Relay Pool (asynchronous background connect)
+    unawaited(_connectToRelayPool().then((_) {
+      if (_currentUser?.role == 'draftsman') {
+        broadcastProfile(_currentUser!);
+      }
+    }).catchError((e) {
+      debugPrint('Error in relay pool connection: $e');
+    }));
 
     // 3. Setup periodic monitoring
     _reconnectTimer?.cancel();
     _reconnectTimer = Timer.periodic(const Duration(seconds: 25), (_) => _checkRelayHealth());
 
     if (_currentUser?.role == 'draftsman') {
-      await broadcastProfile(_currentUser!);
       _heartbeatTimer?.cancel();
       _heartbeatTimer = Timer.periodic(const Duration(seconds: 30), (_) {
         if (_currentUser != null) {
@@ -201,7 +236,7 @@ class NostrService {
         }
       });
     } else {
-      await queryDraftsmen();
+      unawaited(queryDraftsmen());
     }
   }
 
@@ -378,7 +413,7 @@ class NostrService {
           final offer = OfferModel.fromMap(Map<String, dynamic>.from(offerData as Map));
           final isNew = await _localDb.saveOfferIfNew(offer);
           if (isNew) {
-            _incomingOfferController.add(offer);
+            _safeAddOffer(offer);
             await NotificationService().showOfferNotification(
               companyName: offer.companyName,
               title: offer.projectTitle,
@@ -451,11 +486,11 @@ class NostrService {
     try {
       debugPrint('Connecting to Nostr relay $relayUrl...');
       final ws = await WebSocket.connect(relayUrl).timeout(const Duration(seconds: 12));
-      ws.pingInterval = const Duration(seconds: 25);
+      ws.pingInterval = const Duration(seconds: 15);
       _activeRelays[relayUrl] = ws;
       debugPrint('Connected to Nostr relay: $relayUrl');
 
-      _connectionStatusController.add('Nostr Çevrimiçi (${_activeRelays.length} Röle)');
+      _safeAddConnectionStatus('Nostr Çevrimiçi (${_activeRelays.length} Röle)');
 
       // Subscribe to relevant messages
       _subscribeRelay(ws, relayUrl);
@@ -484,7 +519,7 @@ class NostrService {
         onDone: () {
           debugPrint('Nostr relay disconnected: $relayUrl');
           _activeRelays.remove(relayUrl);
-          _connectionStatusController.add('Nostr (${_activeRelays.length} Röle)');
+          _safeAddConnectionStatus('Nostr (${_activeRelays.length} Röle)');
         },
         onError: (err) {
           debugPrint('Nostr relay error on $relayUrl: $err');
@@ -581,7 +616,7 @@ class NostrService {
             final offer = OfferModel.fromMap(offerMap);
             final isNew = await _localDb.saveOfferIfNew(offer);
             if (isNew) {
-              _incomingOfferController.add(offer);
+              _safeAddOffer(offer);
               debugPrint('Brand new encrypted offer received from Nostr: ${offer.companyName}');
               await NotificationService().showOfferNotification(
                 companyName: offer.companyName,
@@ -682,9 +717,7 @@ class NostrService {
     if (hasChanged) {
       _draftsmenDebounceTimer?.cancel();
       _draftsmenDebounceTimer = Timer(const Duration(milliseconds: 250), () {
-        if (!_draftsmenController.isClosed) {
-          _draftsmenController.add(_discoveredDraftsmen.values.toList());
-        }
+        _safeAddDraftsmen(_discoveredDraftsmen.values.toList());
       });
       debugPrint('Candidate found/updated: ${profileMap['name']} (${profileMap['branch']})');
     }
@@ -708,7 +741,7 @@ class NostrService {
       draftsmanLinkedin: data['draftsmanLinkedin'] as String?,
       draftsmanKariyerNet: data['draftsmanKariyerNet'] as String?,
     );
-    _offerResponseController.add(data);
+    _safeAddResponse(data);
     debugPrint('Offer response received for $offerId: $status with contact details');
   }
 
@@ -783,6 +816,14 @@ class NostrService {
   }
 
   void _checkRelayHealth() {
+    for (final entry in _activeRelays.entries.toList()) {
+      if (entry.value.readyState != WebSocket.open) {
+        try {
+          entry.value.close();
+        } catch (_) {}
+        _activeRelays.remove(entry.key);
+      }
+    }
     for (final relayUrl in defaultRelays) {
       if (!_activeRelays.containsKey(relayUrl)) {
         _connectSingleRelay(relayUrl);
@@ -1198,18 +1239,33 @@ class NostrService {
 
   Future<void> dispose() async {
     _heartbeatTimer?.cancel();
+    _heartbeatTimer = null;
     _reconnectTimer?.cancel();
-    _udpSocket?.close();
-    await _tcpServer?.close();
+    _reconnectTimer = null;
+    _draftsmenDebounceTimer?.cancel();
+    _draftsmenDebounceTimer = null;
+
+    try {
+      _udpSocket?.close();
+    } catch (_) {}
+    _udpSocket = null;
+
+    try {
+      await _tcpServer?.close();
+    } catch (_) {}
+    _tcpServer = null;
 
     for (final ws in _activeRelays.values) {
-      await ws.close();
+      try {
+        await ws.close();
+      } catch (_) {}
     }
     _activeRelays.clear();
 
-    await _draftsmenController.close();
-    await _incomingOfferController.close();
-    await _offerResponseController.close();
-    await _connectionStatusController.close();
+    _discoveredDraftsmen.clear();
+    _pendingFileCompleters.clear();
+
+    _safeAddConnectionStatus('Bağlantı Kesildi');
+    _safeAddDraftsmen([]);
   }
 }

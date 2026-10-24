@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>KO|Apps - Teknik Ressamlar iOS Yükleme</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            background-color: #0D1B2A;
+            color: #E0E1DD;
+            margin: 0;
+            padding: 24px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 90vh;
+            text-align: center;
+        }
+        .card {
+            background-color: #1B263B;
+            border: 1px solid #4CC9F0;
+            border-radius: 16px;
+            padding: 28px;
+            max-width: 420px;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+        }
+        h1 {
+            color: #FDB813;
+            font-size: 20px;
+            margin-bottom: 8px;
+        }
+        p {
+            font-size: 13px;
+            color: #8D99AE;
+            line-height: 1.5;
+            margin-bottom: 24px;
+        }
+        .btn-install {
+            display: block;
+            background-color: #4CC9F0;
+            color: #0D1B2A;
+            text-decoration: none;
+            padding: 14px 24px;
+            border-radius: 10px;
+            font-weight: bold;
+            font-size: 14px;
+            margin-bottom: 12px;
+            transition: opacity 0.2s;
+        }
+        .btn-ipa {
+            display: block;
+            background-color: transparent;
+            color: #FDB813;
+            border: 1px solid #FDB813;
+            text-decoration: none;
+            padding: 12px 24px;
+            border-radius: 10px;
+            font-weight: bold;
+            font-size: 13px;
+        }
+        .info {
+            margin-top: 20px;
+            font-size: 11px;
+            color: #8D99AE;
+            text-align: left;
+            background: #0D1B2A;
+            padding: 12px;
+            border-radius: 8px;
+            border: 1px solid #283845;
+        }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <h1>📐 KO|Apps - Teknik Ressamlar</h1>
+        <p>Yeni Nesil Şifreli & Merkeziyetsiz Mühendislik Çizim Ekosistemi (iOS)</p>
+
+        <a class="btn-install" href="itms-services://?action=download-manifest&url=https://raw.githubusercontent.com/KOApps-ui/teknikressamlar/main/ios_install/manifest.plist">
+            📲 iPhone / iPad'e Doğrudan Yükle (OTA)
+        </a>
+
+        <a class="btn-ipa" href="https://github.com/KOApps-ui/teknikressamlar/releases/download/latest/KO_Apps_TeknikRessam.ipa">
+            ⬇️ IPA Dosyasını İndir (Sideloadly / AltStore)
+        </a>
+
+        <div class="info">
+            <strong>💡 İpuçları:</strong><br/>
+            • <b>Sideloadly / AltStore:</b> İndirdiğiniz <code>.ipa</code> dosyasını bilgisayardan tek tıkla iPhone'unuza yükleyebilirsiniz.<br/>
+            • <b>Scarlet / TrollStore:</b> Doğrudan Safari'den IPA linkine tıklayarak kurabilirsiniz.
+        </div>
+    </div>
+</body>
+</html>

@@ -1400,6 +1400,7 @@ class _CompanySearchViewState extends State<CompanySearchView> {
   Future<void> _showCandidateDetail(Map<String, dynamic> candidate) async {
     final skills = List<String>.from(candidate['softwareSkills'] as List? ?? []);
     final portfolioMeta = (candidate['portfolioMeta'] as List? ?? []);
+    final certificates = (candidate['certificates'] as List? ?? []);
     final isVerified = candidate['isVerified'] == true || candidate['diplomaBarcode'] != null;
     final badgeText = candidate['verificationBadge'] as String? ?? 'e-Devlet Onaylı Diploma';
     final hasCv = candidate['hasCv'] == true || (candidate['cvFileName'] != null && (candidate['cvFileName'] as String).isNotEmpty);
@@ -2124,6 +2125,65 @@ class _CompanySearchViewState extends State<CompanySearchView> {
                             ),
                     ),
 
+                    // --- MESLEKİ SERTİFİKALAR (P2P META) ---
+                    if (certificates.isNotEmpty)
+                      _buildCandidateSectionCard(
+                        title: 'Mesleki Sertifikalar & Uzmanlıklar (${certificates.length})',
+                        icon: Icons.workspace_premium,
+                        child: Column(
+                          children: certificates.map((cert) {
+                            final c = Map<String, dynamic>.from(cert as Map);
+                            final title = c['title'] as String? ?? 'Sertifika';
+                            final issuer = c['issuer'] as String? ?? '';
+                            final year = c['issueYear'] as String? ?? '';
+                            final credId = c['credentialId'] as String?;
+                            return Container(
+                              margin: const EdgeInsets.only(bottom: 6),
+                              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                              decoration: BoxDecoration(
+                                color: AppTheme.blueprintDark,
+                                borderRadius: BorderRadius.circular(8),
+                                border: Border.all(color: AppTheme.amberSteel.withValues(alpha: 0.35)),
+                              ),
+                              child: Row(
+                                children: [
+                                  Container(
+                                    padding: const EdgeInsets.all(5),
+                                    decoration: BoxDecoration(
+                                      color: AppTheme.amberSteel.withValues(alpha: 0.15),
+                                      borderRadius: BorderRadius.circular(6),
+                                    ),
+                                    child: const Icon(Icons.military_tech, color: AppTheme.amberSteel, size: 20),
+                                  ),
+                                  const SizedBox(width: 8),
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
+                                        Text(
+                                          title,
+                                          style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: AppTheme.textLight),
+                                        ),
+                                        const SizedBox(height: 2),
+                                        Text(
+                                          '$issuer${year.isNotEmpty ? ' • $year' : ''}',
+                                          style: const TextStyle(fontSize: 10, color: AppTheme.cyanLine),
+                                        ),
+                                        if (credId != null && credId.isNotEmpty)
+                                          Text(
+                                            'Sertifika No: $credId',
+                                            style: const TextStyle(fontSize: 9, color: AppTheme.textMuted, fontFamily: 'monospace'),
+                                          ),
+                                      ],
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            );
+                          }).toList(),
+                        ),
+                      ),
+
                     // --- 5. PORTFÖY ÇİZİMLERİ (P2P META) ---
                     _buildCandidateSectionCard(
                       title: 'Portföy Çizimleri (${portfolioMeta.length})',
@@ -2595,6 +2655,9 @@ class _CompanySearchViewState extends State<CompanySearchView> {
       } catch (_) {}
     }
 
+    final certs = candidate['certificates'] as List? ?? [];
+    final certCount = certs.length;
+
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
       padding: const EdgeInsets.all(16),
@@ -2658,9 +2721,11 @@ class _CompanySearchViewState extends State<CompanySearchView> {
                       '${candidate['branch']} • ${candidate['city']} • ${candidate['experienceYears']} Yıl Tecrübe',
                       style: const TextStyle(fontSize: 11, color: AppTheme.textMuted),
                     ),
-                    if (isVerified || candidate['hasCv'] == true || candidate['cvFileName'] != null) ...[
+                    if (isVerified || candidate['hasCv'] == true || candidate['cvFileName'] != null || certCount > 0) ...[
                       const SizedBox(height: 4),
-                      Row(
+                      Wrap(
+                        spacing: 4,
+                        runSpacing: 4,
                         children: [
                           if (isVerified)
                             Container(
@@ -2682,8 +2747,7 @@ class _CompanySearchViewState extends State<CompanySearchView> {
                                 ],
                               ),
                             ),
-                          if (candidate['hasCv'] == true || candidate['cvFileName'] != null) ...[
-                            if (isVerified) const SizedBox(width: 4),
+                          if (candidate['hasCv'] == true || candidate['cvFileName'] != null)
                             Container(
                               padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                               decoration: BoxDecoration(
@@ -2703,7 +2767,26 @@ class _CompanySearchViewState extends State<CompanySearchView> {
                                 ],
                               ),
                             ),
-                          ],
+                          if (certCount > 0)
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFF10B981).withValues(alpha: 0.12),
+                                borderRadius: BorderRadius.circular(4),
+                                border: Border.all(color: const Color(0xFF10B981).withValues(alpha: 0.35)),
+                              ),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  const Icon(Icons.workspace_premium_outlined, size: 10, color: Color(0xFF10B981)),
+                                  const SizedBox(width: 3),
+                                  Text(
+                                    '$certCount Sertifika',
+                                    style: const TextStyle(color: Color(0xFF10B981), fontSize: 9, fontWeight: FontWeight.bold),
+                                  ),
+                                ],
+                              ),
+                            ),
                         ],
                       ),
                     ],

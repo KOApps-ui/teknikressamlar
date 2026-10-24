@@ -9,7 +9,7 @@ class QuickLoginView extends StatelessWidget {
   final UserProfile profile;
   final VoidCallback onConnect;
   final VoidCallback onEditProfile;
-  final VoidCallback onSwitchAccount;
+  final VoidCallback? onSwitchAccount;
   final VoidCallback onDeleteAccount;
   final bool isLoading;
 
@@ -18,7 +18,7 @@ class QuickLoginView extends StatelessWidget {
     required this.profile,
     required this.onConnect,
     required this.onEditProfile,
-    required this.onSwitchAccount,
+    this.onSwitchAccount,
     required this.onDeleteAccount,
     this.isLoading = false,
   });
@@ -268,26 +268,14 @@ class QuickLoginView extends StatelessWidget {
                 ),
                 const SizedBox(height: 10),
 
-                // Switch Account or Delete
-                Row(
-                  children: [
-                    Expanded(
-                      child: TextButton.icon(
-                        style: TextButton.styleFrom(foregroundColor: AppTheme.cyanLine),
-                        icon: const Icon(Icons.person_add_alt_1_outlined, size: 16),
-                        label: const Text('Yeni Profil Aç', style: TextStyle(fontSize: 12)),
-                        onPressed: onSwitchAccount,
-                      ),
-                    ),
-                    Expanded(
-                      child: TextButton.icon(
-                        style: TextButton.styleFrom(foregroundColor: AppTheme.statusDanger),
-                        icon: const Icon(Icons.delete_forever_outlined, size: 16),
-                        label: const Text('Profili Sil', style: TextStyle(fontSize: 12)),
-                        onPressed: onDeleteAccount,
-                      ),
-                    ),
-                  ],
+                // Delete Profile
+                Center(
+                  child: TextButton.icon(
+                    style: TextButton.styleFrom(foregroundColor: AppTheme.statusDanger),
+                    icon: const Icon(Icons.delete_forever_outlined, size: 16),
+                    label: const Text('Profili Cihazdan Sil', style: TextStyle(fontSize: 12)),
+                    onPressed: onDeleteAccount,
+                  ),
                 ),
               ],
             ),

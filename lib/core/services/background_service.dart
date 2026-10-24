@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:nostr/nostr.dart';
 import '../models/user_profile.dart';
 import 'notification_service.dart';
@@ -21,9 +22,9 @@ class BackgroundService {
     if (!Platform.isAndroid) return;
     FlutterForegroundTask.init(
       androidNotificationOptions: AndroidNotificationOptions(
-        channelId: 'ko_apps_bg_listener',
-        channelName: 'KO|Apps Canlı Ağ Servisi',
-        channelDescription: 'Uygulama kapalıyken yeni iş tekliflerini dinler',
+        channelId: 'ko_apps_bg_listener_v2',
+        channelName: 'KO|Apps Canlı Ağ & Bildirim Servisi',
+        channelDescription: 'Uygulama kapalıyken veya uyku modundayken yeni iş tekliflerini kesintisiz dinler',
         channelImportance: NotificationChannelImportance.LOW,
         priority: NotificationPriority.LOW,
         enableVibration: false,
@@ -35,7 +36,7 @@ class BackgroundService {
         playSound: false,
       ),
       foregroundTaskOptions: ForegroundTaskOptions(
-        eventAction: ForegroundTaskEventAction.repeat(30000),
+        eventAction: ForegroundTaskEventAction.repeat(15000),
         autoRunOnBoot: true,
         allowWakeLock: true,
         allowWifiLock: true,
@@ -43,6 +44,16 @@ class BackgroundService {
         stopWithTask: false,
       ),
     );
+  }
+
+  static Future<bool> isIgnoringBatteryOptimizations() async {
+    if (!Platform.isAndroid) return true;
+    return await FlutterForegroundTask.isIgnoringBatteryOptimizations;
+  }
+
+  static Future<bool> requestIgnoreBatteryOptimization() async {
+    if (!Platform.isAndroid) return true;
+    return await FlutterForegroundTask.requestIgnoreBatteryOptimization();
   }
 
   static Future<void> start(UserProfile profile) async {
@@ -71,8 +82,8 @@ class BackgroundService {
           ? 'KO|Apps - Teknik Ressam Ağı Aktif'
           : 'KO|Apps - İşveren Ağı Aktif';
       final text = profile.role == 'draftsman'
-          ? 'Yeni iş teklifleri kapalıyken de anlık dinleniyor...'
-          : 'Teklif yanıtları arka planda dinleniyor...';
+          ? 'Yeni iş teklifleri uyku modunda da anlık dinleniyor...'
+          : 'Teklif yanıtları uyku modunda da anlık dinleniyor...';
 
       await FlutterForegroundTask.startService(
         notificationTitle: title,
@@ -94,6 +105,8 @@ class OfferListenerTaskHandler extends TaskHandler {
     'wss://nos.lol',
     'wss://relay.primal.net',
     'wss://nostr.mom',
+    'wss://offchain.pub',
+    'wss://relay.damus.io',
   ];
 
   final Map<String, WebSocket> _sockets = {};
@@ -129,36 +142,70 @@ class OfferListenerTaskHandler extends TaskHandler {
         .trim();
 
     for (final url in _relays) {
-      if (_sockets.containsKey(url)) continue;
+      if (_sockets.containsKey(url)) {
+        final existingWs = _sockets[url];
+        if (existingWs?.readyState == WebSocket.open) continue;
+        try {
+          existingWs?.close();
+        } catch (_) {}
+        _sockets.remove(url);
+      }
 
       try {
         final ws = await WebSocket.connect(url).timeout(const Duration(seconds: 8));
+        // Critical Keep-Alive Ping Interval to survive mobile doze and carrier NAT drop
+        ws.pingInterval = const Duration(seconds: 15);
         _sockets[url] = ws;
 
         final subId = 'bg_sub_${cleanPub.substring(0, cleanPub.length >= 8 ? 8 : cleanPub.length)}';
-        ws.add(json.encode([
-          'REQ',
-          subId,
-          {
-            'kinds': [21000],
-            '#p': [cleanPub],
-          }
-        ]));
+        _sendSubscription(ws, subId, cleanPub);
 
         ws.listen(
-          (msg) => _handleMessage(msg.toString()),
+          (msg) => _handleRelayIncoming(ws, subId, cleanPub, msg.toString()),
           onError: (e) {
+            debugPrint('[BackgroundService] Socket error on $url: $e');
             _sockets.remove(url);
           },
           onDone: () {
+            debugPrint('[BackgroundService] Socket closed on $url');
             _sockets.remove(url);
           },
         );
-        debugPrint('[BackgroundService] Subscribed to $url for #p: $cleanPub');
+        debugPrint('[BackgroundService] Connected and subscribed to $url for #p: $cleanPub');
       } catch (e) {
         debugPrint('[BackgroundService] Connect error for $url: $e');
       }
     }
+  }
+
+  void _sendSubscription(WebSocket ws, String subId, String cleanPub) {
+    try {
+      ws.add(json.encode([
+        'REQ',
+        subId,
+        {
+          'kinds': [21000],
+          '#p': [cleanPub],
+        }
+      ]));
+    } catch (e) {
+      debugPrint('[BackgroundService] Failed to send REQ: $e');
+    }
+  }
+
+  void _handleRelayIncoming(WebSocket ws, String subId, String cleanPub, String rawMsg) {
+    try {
+      final parsed = json.decode(rawMsg) as List;
+      if (parsed.isEmpty) return;
+      final type = parsed[0] as String?;
+
+      if (type == 'EVENT') {
+        _handleMessage(rawMsg);
+      } else if (type == 'CLOSED') {
+        debugPrint('[BackgroundService] Relay closed subscription $subId, renewing...');
+        _sendSubscription(ws, subId, cleanPub);
+      }
+    } catch (_) {}
   }
 
   Future<void> _handleMessage(String rawMsg) async {
@@ -188,20 +235,40 @@ class OfferListenerTaskHandler extends TaskHandler {
             final projectTitle = offerMap['projectTitle'] as String? ?? 'Proje Çizimi';
             final budget = offerMap['budget'] as String? ?? '';
 
+            // 1. Persist directly to disk for 100% offline sync across isolates
+            await _persistBackgroundOffer(offerMap);
+
+            // 2. High priority notification banner with sound and vibration
             await NotificationService().showOfferNotification(
               companyName: companyName,
               title: projectTitle,
               budget: budget,
             );
 
+            // 3. Update sticky foreground notification
             await FlutterForegroundTask.updateService(
               notificationTitle: '📬 Yeni İş Teklifi Geldi!',
               notificationText: '$companyName: $projectTitle ($budget)',
             );
+
+            // 4. Send event to main isolate if running
+            try {
+              FlutterForegroundTask.sendDataToMain({
+                'type': 'OFFER_DIRECT',
+                'offer': offerMap,
+              });
+            } catch (_) {}
           }
         } else if (type == 'OFFER_RESPONSE') {
+          final offerId = data['offerId'] as String?;
           final status = data['status'] as String?;
           final draftsmanName = data['draftsmanName'] as String? ?? 'Teknik Ressam';
+
+          // 1. Persist response directly to disk
+          if (offerId != null) {
+            await _persistBackgroundOfferResponse(data);
+          }
+
           if (status == 'accepted') {
             await NotificationService().showOfferAcceptedNotification(
               draftsmanName: draftsmanName,
@@ -213,6 +280,14 @@ class OfferListenerTaskHandler extends TaskHandler {
               notificationText: '$draftsmanName teklifinizi kabul etti. İletişim bilgileri açıldı.',
             );
           }
+
+          // Send event to main isolate if running
+          try {
+            FlutterForegroundTask.sendDataToMain({
+              'type': 'OFFER_RESPONSE',
+              'data': data,
+            });
+          } catch (_) {}
         }
       }
     } catch (e) {
@@ -220,8 +295,51 @@ class OfferListenerTaskHandler extends TaskHandler {
     }
   }
 
+  Future<void> _persistBackgroundOffer(Map<String, dynamic> offerMap) async {
+    try {
+      final dir = await getApplicationDocumentsDirectory();
+      final pendingDir = Directory('${dir.path}/pending_bg_offers');
+      if (!await pendingDir.exists()) {
+        await pendingDir.create(recursive: true);
+      }
+      final offerId = offerMap['id'] as String? ?? 'offer_${DateTime.now().millisecondsSinceEpoch}';
+      final file = File('${pendingDir.path}/offer_$offerId.json');
+      await file.writeAsString(json.encode(offerMap));
+      debugPrint('[BackgroundService] Successfully persisted background offer: $offerId');
+    } catch (e) {
+      debugPrint('[BackgroundService] Error persisting offer: $e');
+    }
+  }
+
+  Future<void> _persistBackgroundOfferResponse(Map<String, dynamic> responseData) async {
+    try {
+      final dir = await getApplicationDocumentsDirectory();
+      final pendingDir = Directory('${dir.path}/pending_bg_offers');
+      if (!await pendingDir.exists()) {
+        await pendingDir.create(recursive: true);
+      }
+      final offerId = responseData['offerId'] as String? ?? 'resp_${DateTime.now().millisecondsSinceEpoch}';
+      final file = File('${pendingDir.path}/response_$offerId.json');
+      await file.writeAsString(json.encode(responseData));
+      debugPrint('[BackgroundService] Successfully persisted background offer response: $offerId');
+    } catch (e) {
+      debugPrint('[BackgroundService] Error persisting response: $e');
+    }
+  }
+
   @override
   void onRepeatEvent(DateTime timestamp) {
+    // Purge stale or half-closed sockets
+    for (final entry in _sockets.entries.toList()) {
+      if (entry.value.readyState != WebSocket.open) {
+        try {
+          entry.value.close();
+        } catch (_) {}
+        _sockets.remove(entry.key);
+      }
+    }
+
+    // Reconnect any missing or dropped relays
     if (_sockets.length < _relays.length) {
       _connectRelays();
     }

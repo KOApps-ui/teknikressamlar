@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'core/models/user_profile.dart';
 import 'core/services/local_db_service.dart';
 import 'core/services/background_service.dart';
+import 'core/services/notification_service.dart';
 import 'core/theme/app_theme.dart';
 import 'draftsman/draftsman_app.dart';
 import 'company/company_app.dart';
@@ -22,6 +23,7 @@ void main() async {
 
   final localDb = LocalDbService();
   await localDb.init();
+  await NotificationService().init();
   BackgroundService.init();
 
   runApp(const TeknikRessamlarApp());

@@ -49,20 +49,27 @@ class NotificationService {
   }) async {
     await init();
     try {
-      const androidDetails = AndroidNotificationDetails(
-        'ko_apps_offers',
-        'İş Teklifleri',
-        channelDescription: 'Yeni şifreli P2P iş teklifi bildirimleri',
+      final androidDetails = AndroidNotificationDetails(
+        'ko_apps_offers_v3',
+        'İş Teklifleri (Doğrudan P2P)',
+        channelDescription: 'Yeni şifreli P2P iş teklifi bildirimleri (Arka plan & Uyku modu aktif)',
         importance: Importance.max,
-        priority: Priority.high,
+        priority: Priority.max,
         showWhen: true,
         enableVibration: true,
         playSound: true,
+        category: AndroidNotificationCategory.message,
+        visibility: NotificationVisibility.public,
+        styleInformation: BigTextStyleInformation(
+          'Proje: $title\nBütçe: $budget\nİşveren: $companyName',
+          contentTitle: '📬 Yeni İş Teklifi: $companyName',
+          summaryText: 'P2P Canlı Ağ Bildirimi',
+        ),
       );
 
       const linuxDetails = LinuxNotificationDetails();
 
-      const notificationDetails = NotificationDetails(
+      final notificationDetails = NotificationDetails(
         android: androidDetails,
         linux: linuxDetails,
       );
@@ -87,20 +94,27 @@ class NotificationService {
   }) async {
     await init();
     try {
-      const androidDetails = AndroidNotificationDetails(
-        'ko_apps_offer_accepted',
+      final androidDetails = AndroidNotificationDetails(
+        'ko_apps_offer_accepted_v3',
         'Teklif Kabul Bildirimleri',
-        channelDescription: 'Teknik ressam teklif kabul bildirimleri',
+        channelDescription: 'Teknik ressam teklif kabul bildirimleri (Arka plan & Uyku modu aktif)',
         importance: Importance.max,
-        priority: Priority.high,
+        priority: Priority.max,
         showWhen: true,
         enableVibration: true,
         playSound: true,
+        category: AndroidNotificationCategory.status,
+        visibility: NotificationVisibility.public,
+        styleInformation: BigTextStyleInformation(
+          '$draftsmanName, "$projectTitle" için teklifinizi kabul etti. İletişim bilgileri ve CAD paftası açıldı.',
+          contentTitle: '🎉 İş Teklifiniz Kabul Edildi!',
+          summaryText: 'P2P Sözleşme Bildirimi',
+        ),
       );
 
       const linuxDetails = LinuxNotificationDetails();
 
-      const notificationDetails = NotificationDetails(
+      final notificationDetails = NotificationDetails(
         android: androidDetails,
         linux: linuxDetails,
       );

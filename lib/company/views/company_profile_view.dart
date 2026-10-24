@@ -15,6 +15,10 @@ import '../../core/services/subscription_service.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/widgets/blueprint_header.dart';
 import '../../core/widgets/subscription_modal.dart';
+import '../../core/widgets/account_removal_dialog.dart';
+import '../../core/widgets/battery_optimization_dialog.dart';
+import '../../core/services/recovery_key_backup_service.dart';
+import '../../core/services/background_service.dart';
 
 class CompanyProfileView extends StatefulWidget {
   final VoidCallback? onProfileSaved;
@@ -440,6 +444,7 @@ class _CompanyProfileViewState extends State<CompanyProfileView> {
 
       await _localDb.saveUserProfile(updated);
       _companyProfile = updated;
+      await RecoveryKeyBackupService().backupProfile(updated);
 
       await _p2pService.start(userProfile: updated);
 
@@ -485,6 +490,7 @@ class _CompanyProfileViewState extends State<CompanyProfileView> {
     );
 
     if (confirm == true) {
+      await BackgroundService.stop();
       await _p2pService.dispose();
       await _localDb.setLoggedIn(false);
       widget.onProfileSaved?.call();
@@ -492,33 +498,21 @@ class _CompanyProfileViewState extends State<CompanyProfileView> {
   }
 
   Future<void> _deleteAccount() async {
-    final confirm = await showDialog<bool>(
+    final res = await AccountRemovalDialog.confirm(
       context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: AppTheme.blueprintDark,
-        title: const Text('Şirket Profilini ve Verileri Sil', style: TextStyle(color: AppTheme.statusDanger)),
-        content: const Text(
-          'DİKKAT: Şirket profiliniz, kimlik anahtarlarınız ve gönderilen tüm iş teklifleri bu cihazdan kalıcı olarak silinecektir.',
-          style: TextStyle(color: AppTheme.textMuted),
-        ),
-        actions: [
-          TextButton(
-            child: const Text('İptal'),
-            onPressed: () => Navigator.of(ctx).pop(false),
-          ),
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(
-              backgroundColor: AppTheme.statusDanger,
-              foregroundColor: Colors.white,
-            ),
-            child: const Text('Kalıcı Olarak Sil'),
-            onPressed: () => Navigator.of(ctx).pop(true),
-          ),
-        ],
-      ),
+      title: 'Şirket Profilini ve Verileri Sil',
+      message:
+          'Şirket profiliniz, kimlik anahtarlarınız ve gönderilen tüm iş teklifleri bu cihazdan kalıcı olarak silinecektir.',
+      profile: _companyProfile,
+      confirmLabel: 'KALICI OLARAK SİL',
     );
 
-    if (confirm == true) {
+    if (res.decision == RemovalDecision.restoreBackup && res.backup != null) {
+      await RecoveryKeyBackupService().restoreToLocal(res.backup!);
+      if (mounted) widget.onProfileSaved?.call();
+      return;
+    }
+    if (res.decision == RemovalDecision.confirmDelete && mounted) {
       await _p2pService.dispose();
       await _localDb.deleteUserProfile();
       await _localDb.clearAllOffers();
@@ -606,7 +600,9 @@ class _CompanyProfileViewState extends State<CompanyProfileView> {
     );
   }
 
-  void _showRestoreAccountDialog() {
+  Future<void> _showRestoreAccountDialog() async {
+    final backups = await RecoveryKeyBackupService().listBackups();
+    if (!mounted) return;
     final keyController = TextEditingController();
     bool isRestoring = false;
 
@@ -625,45 +621,75 @@ class _CompanyProfileViewState extends State<CompanyProfileView> {
               SizedBox(width: 8),
               Expanded(
                 child: Text(
-                  'Şirket Hesabını Geri Yükle',
+                  'Hesabı Geri Yükle',
                   style: TextStyle(color: AppTheme.textLight, fontSize: 15, fontWeight: FontWeight.bold),
                 ),
               ),
             ],
           ),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text(
-                'Daha önce yedeklediğiniz 64 haneli Şirket Kurtarma Anahtarınızı (Private Key) aşağıya yapıştırın:',
-                style: TextStyle(fontSize: 12, color: AppTheme.textMuted, height: 1.4),
-              ),
-              const SizedBox(height: 10),
-              TextField(
-                controller: keyController,
-                maxLines: 2,
-                style: const TextStyle(fontFamily: 'monospace', fontSize: 12, color: AppTheme.amberSteel),
-                decoration: const InputDecoration(
-                  hintText: '64 karakterli hex anahtar...',
-                  labelText: 'Şirket Kurtarma Anahtarı',
-                  prefixIcon: Icon(Icons.key, color: AppTheme.amberSteel),
-                ),
-              ),
-              if (isRestoring) ...[
-                const SizedBox(height: 14),
-                const Center(
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2, color: AppTheme.amberSteel)),
-                      SizedBox(width: 8),
-                      Text('Nostr ağından şirket profili aranıyor...', style: TextStyle(fontSize: 12, color: AppTheme.amberSteel)),
-                    ],
+          content: SizedBox(
+            width: double.maxFinite,
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  if (backups.isNotEmpty) ...[
+                    const Row(
+                      children: [
+                        Icon(Icons.phone_android, size: 14, color: AppTheme.amberSteel),
+                        SizedBox(width: 6),
+                        Expanded(
+                          child: Text(
+                            'Bu cihazdaki yedekli hesaplar — tek dokunuşla açılır',
+                            style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: AppTheme.amberSteel),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    ...backups.map(_buildBackupTile),
+                    const SizedBox(height: 4),
+                    const Divider(color: AppTheme.steelBorder),
+                    const SizedBox(height: 8),
+                    const Text(
+                      'veya kurtarma anahtarınızı kullanın:',
+                      style: TextStyle(fontSize: 11, color: AppTheme.textMuted),
+                    ),
+                    const SizedBox(height: 8),
+                  ] else ...[
+                    const Text(
+                      'Bu cihazda yedekli hesap bulunamadı. Daha önce yedeklediğiniz 64 haneli Şirket Kurtarma Anahtarınızı yapıştırın:',
+                      style: TextStyle(fontSize: 12, color: AppTheme.textMuted, height: 1.4),
+                    ),
+                    const SizedBox(height: 10),
+                  ],
+                  TextField(
+                    controller: keyController,
+                    maxLines: 2,
+                    style: const TextStyle(fontFamily: 'monospace', fontSize: 12, color: AppTheme.amberSteel),
+                    decoration: const InputDecoration(
+                      hintText: '64 karakterli hex anahtar...',
+                      labelText: 'Şirket Kurtarma Anahtarı',
+                      prefixIcon: Icon(Icons.key, color: AppTheme.amberSteel),
+                    ),
                   ),
-                ),
-              ],
-            ],
+                  if (isRestoring) ...[
+                    const SizedBox(height: 14),
+                    const Center(
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2, color: AppTheme.amberSteel)),
+                          SizedBox(width: 8),
+                          Text('Nostr ağından şirket profili aranıyor...', style: TextStyle(fontSize: 12, color: AppTheme.amberSteel)),
+                        ],
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
           ),
           actions: [
             TextButton(
@@ -723,6 +749,78 @@ class _CompanyProfileViewState extends State<CompanyProfileView> {
     );
   }
 
+  Widget _buildBackupTile(AccountBackup backup) {
+    final p = backup.profile;
+    final d = backup.savedAt;
+    final date =
+        '${d.day}.${d.month}.${d.year} ${d.hour.toString().padLeft(2, '0')}:${d.minute.toString().padLeft(2, '0')}';
+
+    return InkWell(
+      onTap: () async {
+        final restored = await RecoveryKeyBackupService().restoreToLocal(backup);
+        if (!mounted) return;
+        Navigator.of(context).pop();
+        if (restored == null) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            backgroundColor: AppTheme.statusSuccess,
+            content: Text('✓ ${restored.name} şirketi cihazdan geri yüklendi (${backup.offers.length} teklif).'),
+          ),
+        );
+        await _loadProfile();
+        if (_companyProfile != null) {
+          await _p2pService.start(userProfile: _companyProfile!);
+        }
+        widget.onProfileSaved?.call();
+      },
+      borderRadius: BorderRadius.circular(10),
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 8),
+        padding: const EdgeInsets.all(10),
+        decoration: BoxDecoration(
+          color: AppTheme.blueprintSurface,
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: AppTheme.amberSteel.withValues(alpha: 0.45)),
+        ),
+        child: Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: AppTheme.amberSteel.withValues(alpha: 0.12),
+                shape: BoxShape.circle,
+              ),
+              child: const Icon(Icons.business, size: 18, color: AppTheme.amberSteel),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    p.name,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: AppTheme.textLight),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    '${p.branch} • $date • ${backup.offers.length} teklif',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontSize: 10, color: AppTheme.textMuted),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 6),
+            const Icon(Icons.download_rounded, size: 18, color: AppTheme.amberSteel),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _buildSectionCard({
     required String title,
     required IconData icon,
@@ -761,6 +859,145 @@ class _CompanyProfileViewState extends State<CompanyProfileView> {
     );
   }
 
+  void _showAccountSecurityDialog() {
+    final hasProfile = _companyProfile != null;
+
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppTheme.blueprintDark,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+          side: const BorderSide(color: AppTheme.cyanLine, width: 1.5),
+        ),
+        title: const Row(
+          children: [
+            Icon(Icons.shield_outlined, color: AppTheme.cyanLine),
+            SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                'Hesap Güvenliği & Kurtarma',
+                style: TextStyle(color: AppTheme.textLight, fontSize: 16, fontWeight: FontWeight.bold),
+              ),
+            ),
+          ],
+        ),
+        content: SizedBox(
+          width: double.maxFinite,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: AppTheme.blueprintSurface,
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: AppTheme.amberSteel.withValues(alpha: 0.35)),
+                ),
+                child: const Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Icon(Icons.vpn_key_outlined, size: 14, color: AppTheme.amberSteel),
+                        SizedBox(width: 6),
+                        Text(
+                          'Kurtarma Anahtarı Nedir?',
+                          style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: AppTheme.amberSteel),
+                        ),
+                      ],
+                    ),
+                    SizedBox(height: 6),
+                    Text(
+                      '64 hanelik gizli anahtarınız yalnızca bu cihazda üretilir, hiçbir sunucuya gönderilmez. Şirket profilinizi ve DID kimliğinizi bu anahtar temsil eder.',
+                      style: TextStyle(fontSize: 11, color: AppTheme.textMuted, height: 1.4),
+                    ),
+                    SizedBox(height: 6),
+                    Text(
+                      '⚠️ Anahtarı not alıp saklayın. Kaydederseniz hesabınızı geri yükleyebilirsiniz; kaybederseniz kurtarılamaz.',
+                      style: TextStyle(fontSize: 11, color: AppTheme.textLight, height: 1.4),
+                    ),
+                  ],
+                ),
+              ),
+              if (!hasProfile) ...[
+                const SizedBox(height: 10),
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: AppTheme.cyanLine.withValues(alpha: 0.08),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: AppTheme.cyanLine.withValues(alpha: 0.35)),
+                  ),
+                  child: const Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Icon(Icons.history, size: 16, color: AppTheme.cyanLine),
+                      SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          'Daha önce hesap açtıysanız “Eski Hesabı Geri Yükle” ile cihazdaki yedeğinizi tek dokunuşla açabilirsiniz.',
+                          style: TextStyle(fontSize: 11, color: AppTheme.textLight, height: 1.4),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+              const SizedBox(height: 14),
+              SizedBox(
+                width: double.infinity,
+                child: OutlinedButton.icon(
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: AppTheme.amberSteel,
+                    side: const BorderSide(color: AppTheme.amberSteel),
+                    padding: const EdgeInsets.symmetric(vertical: 10),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                  ),
+                  icon: const Icon(Icons.vpn_key_outlined, size: 15),
+                  label: const Text('Kurtarma Anahtarını Gör', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+                  onPressed: hasProfile
+                      ? () {
+                          Navigator.of(ctx).pop();
+                          _showSecretKeyDialog();
+                        }
+                      : null,
+                ),
+              ),
+              const SizedBox(height: 8),
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton.icon(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppTheme.cyanLine,
+                    foregroundColor: AppTheme.blueprintDark,
+                    padding: const EdgeInsets.symmetric(vertical: 10),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                  ),
+                  icon: const Icon(Icons.settings_backup_restore, size: 15),
+                  label: const Text('Eski Hesabı Geri Yükle', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+                  onPressed: () {
+                    Navigator.of(ctx).pop();
+                    _showRestoreAccountDialog();
+                  },
+                ),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            child: const Text('Kapat', style: TextStyle(color: AppTheme.textMuted)),
+            onPressed: () => Navigator.of(ctx).pop(),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildCompactHeroHeader() {
     ImageProvider? imageProvider;
     if (_avatarPath != null && File(_avatarPath!).existsSync()) {
@@ -791,6 +1028,7 @@ class _CompanyProfileViewState extends State<CompanyProfileView> {
         border: Border.all(color: AppTheme.amberSteel.withValues(alpha: 0.4)),
       ),
       child: Row(
+        crossAxisAlignment: CrossAxisAlignment.end,
         children: [
           Stack(
             children: [
@@ -840,8 +1078,6 @@ class _CompanyProfileViewState extends State<CompanyProfileView> {
                 ),
                 Text(
                   displayContact,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
                   style: const TextStyle(fontSize: 12, color: AppTheme.amberSteel),
                 ),
                 const SizedBox(height: 6),
@@ -898,31 +1134,49 @@ class _CompanyProfileViewState extends State<CompanyProfileView> {
                       ),
                       child: Text(
                         _selectedBranch,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
                         style: const TextStyle(color: AppTheme.textMuted, fontSize: 10),
                       ),
                     ),
                   ],
                 ),
+                const SizedBox(height: 6),
+                // Güvenlik — "rozet" stili: ikon yeşil, yazı kırmızı.
+                // Kartın sağ kenarında değil, rozet bloğunun ALTINA iner.
+                InkWell(
+                  onTap: _showAccountSecurityDialog,
+                  borderRadius: BorderRadius.circular(4),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: AppTheme.statusDanger.withValues(alpha: 0.12),
+                      borderRadius: BorderRadius.circular(4),
+                      border: Border.all(
+                        color: AppTheme.statusDanger.withValues(alpha: 0.4),
+                      ),
+                    ),
+                    child: const Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          Icons.shield_outlined,
+                          size: 11,
+                          color: AppTheme.statusSuccess,
+                        ),
+                        SizedBox(width: 3),
+                        Text(
+                          'Güvenlik',
+                          style: TextStyle(
+                            color: AppTheme.statusDanger,
+                            fontSize: 10,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
               ],
             ),
-          ),
-          Column(
-            children: [
-              IconButton(
-                icon: const Icon(Icons.vpn_key_outlined, size: 20, color: AppTheme.amberSteel),
-                tooltip: 'Şirket DID Kurtarma Anahtarı',
-                visualDensity: VisualDensity.compact,
-                onPressed: _showSecretKeyDialog,
-              ),
-              IconButton(
-                icon: const Icon(Icons.settings_backup_restore, size: 20, color: AppTheme.cyanLine),
-                tooltip: 'Şirket Hesabını Geri Yükle',
-                visualDensity: VisualDensity.compact,
-                onPressed: _showRestoreAccountDialog,
-              ),
-            ],
           ),
         ],
       ),
@@ -1459,6 +1713,7 @@ class _CompanyProfileViewState extends State<CompanyProfileView> {
               _buildContactCard(),
               _buildTaxPlateCard(),
               _buildSubscriptionCard(),
+              const BatteryOptimizationCard(),
               const SizedBox(height: 6),
 
               // Kaydet & P2P Yayınla Butonu

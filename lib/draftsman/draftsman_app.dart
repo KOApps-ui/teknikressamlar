@@ -6,6 +6,9 @@ import '../core/services/p2p_service.dart';
 import '../core/services/background_service.dart';
 import '../core/theme/app_theme.dart';
 import '../core/widgets/quick_login_view.dart';
+import '../core/widgets/account_removal_dialog.dart';
+import '../core/widgets/battery_optimization_dialog.dart';
+import '../core/services/recovery_key_backup_service.dart';
 import 'views/draftsman_profile_view.dart';
 import 'views/draftsman_offers_view.dart';
 
@@ -26,6 +29,7 @@ class _DraftsmanAppState extends State<DraftsmanApp> with WidgetsBindingObserver
   bool _isEditingProfile = false;
   int _currentIndex = 0;
   int _pendingOffersCount = 0;
+  int _profileViewEpoch = 0;
   StreamSubscription? _offerSub;
 
   @override
@@ -94,51 +98,122 @@ class _DraftsmanAppState extends State<DraftsmanApp> with WidgetsBindingObserver
   }
 
   Future<void> _checkUserProfile() async {
-    final profile = await _localDb.getUserProfile();
-    final loggedIn = await _localDb.isUserLoggedIn();
+    try {
+      final profile = await _localDb.getUserProfile();
+      final loggedIn = await _localDb.isUserLoggedIn();
 
-    if (profile != null && loggedIn) {
-      await _p2pService.start(userProfile: profile);
-      await BackgroundService.start(profile);
-    }
+      if (profile != null && loggedIn) {
+        await _p2pService.start(userProfile: profile).timeout(
+          const Duration(seconds: 4),
+          onTimeout: () {
+            debugPrint('Draftsman P2PService start timed out; continuing in background');
+          },
+        );
+        unawaited(BackgroundService.start(profile));
+      }
 
-    if (mounted) {
-      setState(() {
-        _userProfile = profile;
-        _isLoggedIn = loggedIn;
-        _isLoading = false;
-        _isEditingProfile = false;
-      });
+      if (mounted) {
+        setState(() {
+          _userProfile = profile;
+          _isLoggedIn = loggedIn;
+          _isLoading = false;
+          _isEditingProfile = false;
+        });
+
+        if (profile != null && loggedIn) {
+          Future.delayed(const Duration(milliseconds: 1500), () {
+            if (mounted) {
+              BatteryOptimizationDialog.checkAndShow(context);
+            }
+          });
+        }
+      }
+    } catch (e, stack) {
+      debugPrint('Error in _checkUserProfile: $e\n$stack');
+      if (mounted) {
+        setState(() => _isLoading = false);
+      }
     }
   }
 
   Future<void> _connectSession() async {
     if (_userProfile == null) return;
     setState(() => _isLoading = true);
-    await _localDb.setLoggedIn(true);
-    await _p2pService.start(userProfile: _userProfile!);
-    await BackgroundService.start(_userProfile!);
-    if (mounted) {
-      setState(() {
-        _isLoggedIn = true;
-        _isLoading = false;
-      });
+    try {
+      await _localDb.setLoggedIn(true);
+      await _p2pService.start(userProfile: _userProfile!).timeout(
+        const Duration(seconds: 4),
+        onTimeout: () {
+          debugPrint('Draftsman P2PService start timed out after 4s; continuing in background');
+        },
+      );
+      unawaited(BackgroundService.start(_userProfile!));
+    } catch (e, stack) {
+      debugPrint('Error in _connectSession: $e\n$stack');
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isLoggedIn = true;
+          _isLoading = false;
+        });
+      }
     }
+  }
+
+  Future<void> _deleteCurrentAccount() async {
+    final res = await AccountRemovalDialog.confirm(
+      context: context,
+      title: 'Profili Kalıcı Olarak Sil',
+      message:
+          'Profiliniz, kriptografik anahtarlarınız ve bu cihazdaki teklifleriniz kalıcı olarak silinecektir.',
+      profile: _userProfile,
+      confirmLabel: 'KALICI OLARAK SİL',
+    );
+    final handled = await _handleRemovalResult(res);
+    if (handled) return;
+    if (!mounted) return;
+
+    setState(() => _isLoading = true);
+    await BackgroundService.stop();
+    await _p2pService.dispose();
+    await _localDb.deleteUserProfile();
+    await _localDb.clearAllOffers();
+
+    if (!mounted) return;
+    setState(() {
+      _userProfile = null;
+      _isLoggedIn = false;
+      _isEditingProfile = true;
+      _currentIndex = 0;
+      _pendingOffersCount = 0;
+      _profileViewEpoch++;
+      _isLoading = false;
+    });
+  }
+
+  /// Returns true when the removal was cancelled or the account was restored.
+  Future<bool> _handleRemovalResult(RemovalResult res) async {
+    if (res.decision == RemovalDecision.restoreBackup && res.backup != null) {
+      await RecoveryKeyBackupService().restoreToLocal(res.backup!);
+      await _checkUserProfile();
+      return true;
+    }
+    return res.decision != RemovalDecision.confirmDelete;
   }
 
   @override
   Widget build(BuildContext context) {
-    if (_isLoading) {
-      return const Scaffold(
-        backgroundColor: AppTheme.blueprintDark,
-        body: Center(
-          child: CircularProgressIndicator(color: AppTheme.cyanLine),
-        ),
-      );
-    }
-
     if (_userProfile == null || _isEditingProfile) {
+      if (_isLoading) {
+        return const Scaffold(
+          backgroundColor: AppTheme.blueprintDark,
+          body: Center(
+            child: CircularProgressIndicator(color: AppTheme.cyanLine),
+          ),
+        );
+      }
       return DraftsmanProfileView(
+        key: ValueKey('draftsman_profile_$_profileViewEpoch'),
         onProfileSaved: () => _checkUserProfile(),
       );
     }
@@ -149,21 +224,24 @@ class _DraftsmanAppState extends State<DraftsmanApp> with WidgetsBindingObserver
         isLoading: _isLoading,
         onConnect: _connectSession,
         onEditProfile: () => setState(() => _isEditingProfile = true),
-        onSwitchAccount: () => setState(() {
-          _isEditingProfile = true;
-        }),
-        onDeleteAccount: () async {
-          await BackgroundService.stop();
-          await _p2pService.dispose();
-          await _localDb.deleteUserProfile();
-          await _localDb.clearAllOffers();
-          await _checkUserProfile();
-        },
+        onDeleteAccount: _deleteCurrentAccount,
+      );
+    }
+
+    if (_isLoading) {
+      return const Scaffold(
+        backgroundColor: AppTheme.blueprintDark,
+        body: Center(
+          child: CircularProgressIndicator(color: AppTheme.cyanLine),
+        ),
       );
     }
 
     final List<Widget> pages = [
-      DraftsmanProfileView(onProfileSaved: () => _checkUserProfile()),
+      DraftsmanProfileView(
+        key: ValueKey('draftsman_profile_$_profileViewEpoch'),
+        onProfileSaved: () => _checkUserProfile(),
+      ),
       const DraftsmanOffersView(),
     ];
 

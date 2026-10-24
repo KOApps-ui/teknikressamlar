@@ -3,6 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:teknik_ressamlar/core/models/user_profile.dart';
 import 'package:teknik_ressamlar/core/models/offer_model.dart';
 import 'package:teknik_ressamlar/core/services/crypto_service.dart';
+import 'package:teknik_ressamlar/core/services/nostr_service.dart';
 
 void main() {
   test('UserProfile and OfferModel serialization test', () {
@@ -167,5 +168,58 @@ void main() {
     final rawHex = 'abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789';
 
     expect(cleanId(idWithPrefix), equals(rawHex));
+  });
+
+  test('CertificateItem model serialization and UserProfile integration test', () {
+    final cert = CertificateItem(
+      id: 'cert-1',
+      title: 'Autodesk Certified Professional - Revit Structure',
+      issuer: 'Autodesk',
+      issueYear: '2024',
+      credentialId: 'AUTODK-992384-REVIT',
+      fileName: 'revit_cert.pdf',
+      filePath: '/mock/path/revit_cert.pdf',
+      fileSize: 409600,
+    );
+
+    final certMap = cert.toMap();
+    final restoredCert = CertificateItem.fromMap(certMap);
+    expect(restoredCert.title, equals('Autodesk Certified Professional - Revit Structure'));
+    expect(restoredCert.issuer, equals('Autodesk'));
+    expect(restoredCert.issueYear, equals('2024'));
+
+    final profile = UserProfile.fromMap({
+      'id': 'did:ko:tr:ressam_cert_test',
+      'name': 'Merve Mühendis',
+      'email': 'merve@example.com',
+      'phone': '+905559876543',
+      'role': 'draftsman',
+      'branch': 'BIM & Mimari Modelleme',
+      'certificates': [cert.toMap()],
+    });
+
+    final summary = profile.toPublicSummaryMap();
+    expect(summary['certificates'], isA<List>());
+    expect((summary['certificates'] as List).length, equals(1));
+    expect((summary['certificates'] as List).first['title'], equals('Autodesk Certified Professional - Revit Structure'));
+
+    final jsonString = profile.toJson();
+    final fromJsonProfile = UserProfile.fromJson(jsonString);
+    expect(fromJsonProfile.certificates.length, equals(1));
+    expect(fromJsonProfile.certificates.first.title, equals('Autodesk Certified Professional - Revit Structure'));
+  });
+
+  test('NostrService dispose and reconnect cycle does not close streams', () async {
+    final nostr = NostrService();
+    expect(nostr.discoveredDraftsmenStream, isNotNull);
+    expect(nostr.incomingOfferStream, isNotNull);
+    expect(nostr.connectionStatusStream, isNotNull);
+
+    // Simulate logout dispose
+    await nostr.dispose();
+
+    // Verify state and that adding to stream does not throw Bad state
+    expect(nostr.discoveredDraftsmen, isEmpty);
+    nostr.clearDiscoveredDraftsmen();
   });
 }

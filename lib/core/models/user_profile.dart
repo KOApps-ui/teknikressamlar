@@ -55,6 +55,69 @@ class PortfolioFile {
       PortfolioFile.fromMap(json.decode(source) as Map<String, dynamic>);
 }
 
+class CertificateItem {
+  final String id;
+  final String title;
+  final String issuer;
+  final String issueYear;
+  final String? credentialId;
+  final String? fileName;
+  final String? filePath;
+  final String? fileBase64;
+  final int? fileSize;
+  final DateTime? dateAdded;
+
+  CertificateItem({
+    required this.id,
+    required this.title,
+    required this.issuer,
+    this.issueYear = '',
+    this.credentialId,
+    this.fileName,
+    this.filePath,
+    this.fileBase64,
+    this.fileSize,
+    this.dateAdded,
+  });
+
+  Map<String, dynamic> toMap() {
+    return {
+      'id': id,
+      'title': title,
+      'issuer': issuer,
+      'issueYear': issueYear,
+      'credentialId': credentialId,
+      'fileName': fileName,
+      'filePath': filePath,
+      'fileBase64': fileBase64,
+      'fileSize': fileSize,
+      'dateAdded': dateAdded?.toIso8601String(),
+    };
+  }
+
+  factory CertificateItem.fromMap(Map<String, dynamic> map) {
+    return CertificateItem(
+      id: map['id'] as String? ?? '',
+      title: map['title'] as String? ?? '',
+      issuer: map['issuer'] as String? ?? '',
+      issueYear: map['issueYear'] as String? ?? '',
+      credentialId: map['credentialId'] as String?,
+      fileName: map['fileName'] as String?,
+      filePath: map['filePath'] as String?,
+      fileBase64: map['fileBase64'] as String?,
+      fileSize: map['fileSize'] as int?,
+      dateAdded: map['dateAdded'] != null
+          ? DateTime.tryParse(map['dateAdded'] as String)
+          : null,
+    );
+  }
+
+  String toJson() => json.encode(toMap());
+
+  factory CertificateItem.fromJson(String source) =>
+      CertificateItem.fromMap(json.decode(source) as Map<String, dynamic>);
+}
+
 class UserProfile {
   final String id;
   final String name;
@@ -68,6 +131,7 @@ class UserProfile {
   final List<String> softwareSkills;
   final String city;
   final List<PortfolioFile> portfolioFiles;
+  final List<CertificateItem> certificates;
   final String publicKey;
   final String privateKey;
   final String authProvider; // 'local_did', 'google', 'linkedin'
@@ -102,6 +166,7 @@ class UserProfile {
     required this.softwareSkills,
     required this.city,
     required this.portfolioFiles,
+    this.certificates = const [],
     required this.publicKey,
     required this.privateKey,
     required this.authProvider,
@@ -137,6 +202,7 @@ class UserProfile {
     List<String>? softwareSkills,
     String? city,
     List<PortfolioFile>? portfolioFiles,
+    List<CertificateItem>? certificates,
     String? publicKey,
     String? privateKey,
     String? authProvider,
@@ -172,6 +238,7 @@ class UserProfile {
       softwareSkills: softwareSkills ?? this.softwareSkills,
       city: city ?? this.city,
       portfolioFiles: portfolioFiles ?? this.portfolioFiles,
+      certificates: certificates ?? this.certificates,
       publicKey: publicKey ?? this.publicKey,
       privateKey: privateKey ?? this.privateKey,
       authProvider: authProvider ?? this.authProvider,
@@ -209,6 +276,7 @@ class UserProfile {
       'softwareSkills': softwareSkills,
       'city': city,
       'portfolioFiles': portfolioFiles.map((x) => x.toMap()).toList(),
+      'certificates': certificates.map((x) => x.toMap()).toList(),
       'publicKey': publicKey,
       'privateKey': privateKey,
       'authProvider': authProvider,
@@ -266,6 +334,18 @@ class UserProfile {
                 'description': f.description,
               })
           .toList(),
+      'certificates': certificates
+          .map((c) => {
+                'id': c.id,
+                'title': c.title,
+                'issuer': c.issuer,
+                'issueYear': c.issueYear,
+                'credentialId': c.credentialId,
+                'hasFile': c.fileName != null && c.fileName!.isNotEmpty,
+                'fileName': c.fileName,
+                'fileSize': c.fileSize,
+              })
+          .toList(),
       'isAvailable': isAvailable,
       'lastSeen': DateTime.now().toIso8601String(),
     };
@@ -286,6 +366,9 @@ class UserProfile {
       city: map['city'] as String? ?? '',
       portfolioFiles: (map['portfolioFiles'] as List? ?? [])
           .map((item) => PortfolioFile.fromMap(Map<String, dynamic>.from(item as Map)))
+          .toList(),
+      certificates: (map['certificates'] as List? ?? [])
+          .map((item) => CertificateItem.fromMap(Map<String, dynamic>.from(item as Map)))
           .toList(),
       publicKey: map['publicKey'] as String? ?? '',
       privateKey: map['privateKey'] as String? ?? '',

@@ -15,6 +15,10 @@ import '../../core/services/edevlet_service.dart';
 import '../../core/utils/file_helper.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/widgets/blueprint_header.dart';
+import '../../core/widgets/account_removal_dialog.dart';
+import '../../core/widgets/battery_optimization_dialog.dart';
+import '../../core/services/recovery_key_backup_service.dart';
+import '../../core/services/background_service.dart';
 
 class DraftsmanProfileView extends StatefulWidget {
   final VoidCallback? onProfileSaved;
@@ -50,6 +54,7 @@ class _DraftsmanProfileViewState extends State<DraftsmanProfileView> {
   final List<String> _selectedSkills = [];
   final List<String> _customSkills = [];
   final List<PortfolioFile> _portfolioFiles = [];
+  final List<CertificateItem> _certificates = [];
   String? _avatarPath;
   String? _avatarBase64;
   final _diplomaBarcodeController = TextEditingController();
@@ -284,6 +289,10 @@ class _DraftsmanProfileViewState extends State<DraftsmanProfileView> {
       _cvBase64 = profile.cvBase64;
       _cvFileSize = profile.cvFileSize;
       _cvUploadDate = profile.cvUploadDate;
+
+      // Certificates loading
+      _certificates.clear();
+      _certificates.addAll(profile.certificates);
     } else {
       _selectedBranch = null;
       _selectedTitle = null;
@@ -297,6 +306,7 @@ class _DraftsmanProfileViewState extends State<DraftsmanProfileView> {
       _bioController.clear();
       _diplomaBarcodeController.clear();
       _portfolioFiles.clear();
+      _certificates.clear();
       _avatarPath = null;
       _avatarBase64 = null;
       _isVerified = false;
@@ -893,7 +903,9 @@ class _DraftsmanProfileViewState extends State<DraftsmanProfileView> {
     );
   }
 
-  void _showRestoreAccountDialog() {
+  Future<void> _showRestoreAccountDialog() async {
+    final backups = await RecoveryKeyBackupService().listBackups();
+    if (!mounted) return;
     final keyController = TextEditingController();
     bool isRestoring = false;
 
@@ -918,38 +930,68 @@ class _DraftsmanProfileViewState extends State<DraftsmanProfileView> {
               ),
             ],
           ),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text(
-                'Daha önce yedeklediğiniz 64 haneli Gizli Kurtarma Anahtarınızı yapıştırın:',
-                style: TextStyle(fontSize: 12, color: AppTheme.textMuted),
-              ),
-              const SizedBox(height: 10),
-              TextField(
-                controller: keyController,
-                maxLines: 2,
-                style: const TextStyle(fontFamily: 'monospace', fontSize: 12, color: AppTheme.cyanLine),
-                decoration: const InputDecoration(
-                  hintText: '64 karakterli hex anahtar...',
-                  prefixIcon: Icon(Icons.key, color: AppTheme.cyanLine),
-                ),
-              ),
-              if (isRestoring) ...[
-                const SizedBox(height: 14),
-                const Center(
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2, color: AppTheme.cyanLine)),
-                      SizedBox(width: 8),
-                      Text('Nostr ağından profil aranıyor...', style: TextStyle(fontSize: 12, color: AppTheme.cyanLine)),
-                    ],
+          content: SizedBox(
+            width: double.maxFinite,
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  if (backups.isNotEmpty) ...[
+                    const Row(
+                      children: [
+                        Icon(Icons.phone_android, size: 14, color: AppTheme.cyanLine),
+                        SizedBox(width: 6),
+                        Expanded(
+                          child: Text(
+                            'Bu cihazdaki yedekli hesaplar — tek dokunuşla açılır',
+                            style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: AppTheme.cyanLine),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    ...backups.map(_buildBackupTile),
+                    const SizedBox(height: 4),
+                    const Divider(color: AppTheme.steelBorder),
+                    const SizedBox(height: 8),
+                    const Text(
+                      'veya kurtarma anahtarınızı kullanın:',
+                      style: TextStyle(fontSize: 11, color: AppTheme.textMuted),
+                    ),
+                    const SizedBox(height: 8),
+                  ] else ...[
+                    const Text(
+                      'Bu cihazda yedekli hesap bulunamadı. Daha önce yedeklediğiniz 64 haneli kurtarma anahtarınızı yapıştırın:',
+                      style: TextStyle(fontSize: 12, color: AppTheme.textMuted, height: 1.4),
+                    ),
+                    const SizedBox(height: 10),
+                  ],
+                  TextField(
+                    controller: keyController,
+                    maxLines: 2,
+                    style: const TextStyle(fontFamily: 'monospace', fontSize: 12, color: AppTheme.cyanLine),
+                    decoration: const InputDecoration(
+                      hintText: '64 karakterli hex anahtar...',
+                      prefixIcon: Icon(Icons.key, color: AppTheme.cyanLine),
+                    ),
                   ),
-                ),
-              ],
-            ],
+                  if (isRestoring) ...[
+                    const SizedBox(height: 14),
+                    const Center(
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2, color: AppTheme.cyanLine)),
+                          SizedBox(width: 8),
+                          Text('Hesap aranıyor...', style: TextStyle(fontSize: 12, color: AppTheme.cyanLine)),
+                        ],
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
           ),
           actions: [
             TextButton(
@@ -997,6 +1039,78 @@ class _DraftsmanProfileViewState extends State<DraftsmanProfileView> {
                     },
               child: const Text('GERİ YÜKLE', style: TextStyle(fontWeight: FontWeight.bold)),
             ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildBackupTile(AccountBackup backup) {
+    final p = backup.profile;
+    final d = backup.savedAt;
+    final date =
+        '${d.day}.${d.month}.${d.year} ${d.hour.toString().padLeft(2, '0')}:${d.minute.toString().padLeft(2, '0')}';
+
+    return InkWell(
+      onTap: () async {
+        final restored = await RecoveryKeyBackupService().restoreToLocal(backup);
+        if (!mounted) return;
+        Navigator.of(context).pop();
+        if (restored == null) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            backgroundColor: AppTheme.statusSuccess,
+            content: Text('✓ ${restored.name} hesabı cihazdan geri yüklendi (${backup.offers.length} teklif).'),
+          ),
+        );
+        await _loadProfile();
+        if (_currentProfile != null) {
+          await _p2pService.start(userProfile: _currentProfile!);
+        }
+        widget.onProfileSaved?.call();
+      },
+      borderRadius: BorderRadius.circular(10),
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 8),
+        padding: const EdgeInsets.all(10),
+        decoration: BoxDecoration(
+          color: AppTheme.blueprintSurface,
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: AppTheme.cyanLine.withValues(alpha: 0.45)),
+        ),
+        child: Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: AppTheme.cyanLine.withValues(alpha: 0.12),
+                shape: BoxShape.circle,
+              ),
+              child: const Icon(Icons.person, size: 18, color: AppTheme.cyanLine),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    p.name,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: AppTheme.textLight),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    '${p.branch} • $date • ${backup.offers.length} teklif',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontSize: 10, color: AppTheme.textMuted),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 6),
+            const Icon(Icons.download_rounded, size: 18, color: AppTheme.cyanLine),
           ],
         ),
       ),
@@ -1106,6 +1220,7 @@ class _DraftsmanProfileViewState extends State<DraftsmanProfileView> {
         experienceYears: _experienceYears,
         softwareSkills: _selectedSkills,
         portfolioFiles: _portfolioFiles,
+        certificates: _certificates,
         avatarPath: _avatarPath,
         avatarBase64: _avatarBase64,
         isVerified: _isVerified,
@@ -1125,6 +1240,7 @@ class _DraftsmanProfileViewState extends State<DraftsmanProfileView> {
       await _localDb.saveUserProfile(updatedProfile);
       await _localDb.setLoggedIn(true);
       _currentProfile = updatedProfile;
+      await RecoveryKeyBackupService().backupProfile(updatedProfile);
 
       await _p2pService.start(userProfile: updatedProfile);
 
@@ -1165,6 +1281,7 @@ class _DraftsmanProfileViewState extends State<DraftsmanProfileView> {
     );
 
     if (confirm == true) {
+      await BackgroundService.stop();
       await _p2pService.dispose();
       await _localDb.setLoggedIn(false);
       widget.onProfileSaved?.call();
@@ -1172,26 +1289,20 @@ class _DraftsmanProfileViewState extends State<DraftsmanProfileView> {
   }
 
   Future<void> _deleteAccount() async {
-    final confirm = await showDialog<bool>(
+    final res = await AccountRemovalDialog.confirm(
       context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: AppTheme.blueprintDark,
-        title: const Text('Hesabı Kalıcı Sil', style: TextStyle(color: AppTheme.statusDanger)),
-        content: const Text(
-          'Profiliniz, kriptografik anahtarlarınız ve teklifler kalıcı olarak silinecektir.',
-        ),
-        actions: [
-          TextButton(child: const Text('İptal'), onPressed: () => Navigator.of(ctx).pop(false)),
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(backgroundColor: AppTheme.statusDanger, foregroundColor: Colors.white),
-            child: const Text('Kalıcı Olarak Sil'),
-            onPressed: () => Navigator.of(ctx).pop(true),
-          ),
-        ],
-      ),
+      title: 'Hesabı Kalıcı Sil',
+      message: 'Profiliniz, kriptografik anahtarlarınız ve teklifler kalıcı olarak silinecektir.',
+      profile: _currentProfile,
+      confirmLabel: 'KALICI OLARAK SİL',
     );
 
-    if (confirm == true) {
+    if (res.decision == RemovalDecision.restoreBackup && res.backup != null) {
+      await RecoveryKeyBackupService().restoreToLocal(res.backup!);
+      if (mounted) widget.onProfileSaved?.call();
+      return;
+    }
+    if (res.decision == RemovalDecision.confirmDelete && mounted) {
       await _p2pService.dispose();
       await _localDb.deleteUserProfile();
       await _localDb.clearAllOffers();
@@ -1237,6 +1348,145 @@ class _DraftsmanProfileViewState extends State<DraftsmanProfileView> {
     );
   }
 
+  void _showAccountSecurityDialog() {
+    final hasProfile = _currentProfile != null;
+
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppTheme.blueprintDark,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+          side: const BorderSide(color: AppTheme.cyanLine, width: 1.5),
+        ),
+        title: const Row(
+          children: [
+            Icon(Icons.shield_outlined, color: AppTheme.cyanLine),
+            SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                'Hesap Güvenliği & Kurtarma',
+                style: TextStyle(color: AppTheme.textLight, fontSize: 16, fontWeight: FontWeight.bold),
+              ),
+            ),
+          ],
+        ),
+        content: SizedBox(
+          width: double.maxFinite,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: AppTheme.blueprintSurface,
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: AppTheme.amberSteel.withValues(alpha: 0.35)),
+                ),
+                child: const Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Icon(Icons.vpn_key_outlined, size: 14, color: AppTheme.amberSteel),
+                        SizedBox(width: 6),
+                        Text(
+                          'Kurtarma Anahtarı Nedir?',
+                          style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: AppTheme.amberSteel),
+                        ),
+                      ],
+                    ),
+                    SizedBox(height: 6),
+                    Text(
+                      '64 hanelik gizli anahtarınız yalnızca bu cihazda üretilir, hiçbir sunucuya gönderilmez. Profilinizi ve DID kimliğinizi bu anahtar temsil eder.',
+                      style: TextStyle(fontSize: 11, color: AppTheme.textMuted, height: 1.4),
+                    ),
+                    SizedBox(height: 6),
+                    Text(
+                      '⚠️ Anahtarı not alıp saklayın. Kaydederseniz hesabınızı geri yükleyebilirsiniz; kaybederseniz kurtarılamaz.',
+                      style: TextStyle(fontSize: 11, color: AppTheme.textLight, height: 1.4),
+                    ),
+                  ],
+                ),
+              ),
+              if (!hasProfile) ...[
+                const SizedBox(height: 10),
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: AppTheme.cyanLine.withValues(alpha: 0.08),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: AppTheme.cyanLine.withValues(alpha: 0.35)),
+                  ),
+                  child: const Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Icon(Icons.history, size: 16, color: AppTheme.cyanLine),
+                      SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          'Daha önce hesap açtıysanız “Eski Hesabı Geri Yükle” ile cihazdaki yedeğinizi tek dokunuşla açabilirsiniz.',
+                          style: TextStyle(fontSize: 11, color: AppTheme.textLight, height: 1.4),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+              const SizedBox(height: 14),
+              SizedBox(
+                width: double.infinity,
+                child: OutlinedButton.icon(
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: AppTheme.amberSteel,
+                    side: const BorderSide(color: AppTheme.amberSteel),
+                    padding: const EdgeInsets.symmetric(vertical: 10),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                  ),
+                  icon: const Icon(Icons.vpn_key_outlined, size: 15),
+                  label: const Text('Kurtarma Anahtarını Gör', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+                  onPressed: hasProfile
+                      ? () {
+                          Navigator.of(ctx).pop();
+                          _showSecretKeyDialog();
+                        }
+                      : null,
+                ),
+              ),
+              const SizedBox(height: 8),
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton.icon(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppTheme.cyanLine,
+                    foregroundColor: AppTheme.blueprintDark,
+                    padding: const EdgeInsets.symmetric(vertical: 10),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                  ),
+                  icon: const Icon(Icons.settings_backup_restore, size: 15),
+                  label: const Text('Eski Hesabı Geri Yükle', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+                  onPressed: () {
+                    Navigator.of(ctx).pop();
+                    _showRestoreAccountDialog();
+                  },
+                ),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            child: const Text('Kapat', style: TextStyle(color: AppTheme.textMuted)),
+            onPressed: () => Navigator.of(ctx).pop(),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildCompactHeroHeader() {
     ImageProvider? imageProvider;
     if (_avatarPath != null && File(_avatarPath!).existsSync()) {
@@ -1268,6 +1518,7 @@ class _DraftsmanProfileViewState extends State<DraftsmanProfileView> {
         border: Border.all(color: AppTheme.cyanLine.withValues(alpha: 0.4)),
       ),
       child: Row(
+        crossAxisAlignment: CrossAxisAlignment.end,
         children: [
           Stack(
             children: [
@@ -1317,8 +1568,6 @@ class _DraftsmanProfileViewState extends State<DraftsmanProfileView> {
                 ),
                 Text(
                   displayTitle,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
                   style: const TextStyle(fontSize: 12, color: AppTheme.cyanLine),
                 ),
                 const SizedBox(height: 6),
@@ -1374,24 +1623,45 @@ class _DraftsmanProfileViewState extends State<DraftsmanProfileView> {
                     ),
                   ],
                 ),
+                const SizedBox(height: 6),
+                // Güvenlik — "CV Yüklü" rozetiyle AYNI stil:
+                // ikon yeşil, yazı kırmızı, kartın sağ kenarında değil
+                // rozet bloğunun ALTINA yerleşir.
+                InkWell(
+                  onTap: _showAccountSecurityDialog,
+                  borderRadius: BorderRadius.circular(4),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: AppTheme.statusDanger.withValues(alpha: 0.12),
+                      borderRadius: BorderRadius.circular(4),
+                      border: Border.all(
+                        color: AppTheme.statusDanger.withValues(alpha: 0.4),
+                      ),
+                    ),
+                    child: const Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          Icons.shield_outlined,
+                          size: 11,
+                          color: AppTheme.statusSuccess,
+                        ),
+                        SizedBox(width: 3),
+                        Text(
+                          'Güvenlik',
+                          style: TextStyle(
+                            color: AppTheme.statusDanger,
+                            fontSize: 10,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
               ],
             ),
-          ),
-          Column(
-            children: [
-              IconButton(
-                icon: const Icon(Icons.vpn_key_outlined, size: 20, color: AppTheme.amberSteel),
-                tooltip: 'Gizli Anahtar (DID)',
-                visualDensity: VisualDensity.compact,
-                onPressed: _showSecretKeyDialog,
-              ),
-              IconButton(
-                icon: const Icon(Icons.settings_backup_restore, size: 20, color: AppTheme.cyanLine),
-                tooltip: 'Hesabı Geri Yükle',
-                visualDensity: VisualDensity.compact,
-                onPressed: _showRestoreAccountDialog,
-              ),
-            ],
           ),
         ],
       ),
@@ -1965,6 +2235,375 @@ class _DraftsmanProfileViewState extends State<DraftsmanProfileView> {
     );
   }
 
+  void _removeCertificate(String id) {
+    setState(() {
+      _certificates.removeWhere((c) => c.id == id);
+    });
+  }
+
+  Future<void> _openCertificateFile(CertificateItem cert) async {
+    try {
+      if (cert.filePath != null && cert.filePath!.isNotEmpty && File(cert.filePath!).existsSync()) {
+        await FileLauncherService.openFile(cert.filePath!);
+        return;
+      }
+      if (cert.fileBase64 != null && cert.fileBase64!.isNotEmpty) {
+        final tempDir = await getTemporaryDirectory();
+        final ext = cert.fileName != null && cert.fileName!.contains('.')
+            ? cert.fileName!.split('.').last
+            : 'pdf';
+        final tempFile = File('${tempDir.path}/cert_${cert.id}.$ext');
+        await tempFile.writeAsBytes(base64Decode(cert.fileBase64!));
+        await FileLauncherService.openFile(tempFile.path);
+        return;
+      }
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            backgroundColor: AppTheme.statusDanger,
+            content: Text('Sertifika belgesi cihazda bulunamadı.'),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(backgroundColor: AppTheme.statusDanger, content: Text('Belge açılamadı: $e')),
+        );
+      }
+    }
+  }
+
+  Future<void> _showAddCertificateDialog() async {
+    final titleController = TextEditingController();
+    final issuerController = TextEditingController();
+    final yearController = TextEditingController(text: DateTime.now().year.toString());
+    final credIdController = TextEditingController();
+    String? certFileName;
+    String? certFilePath;
+    String? certBase64;
+    int? certFileSize;
+
+    await showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: AppTheme.blueprintDark,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+        side: BorderSide(color: AppTheme.amberSteel, width: 1.5),
+      ),
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setModalState) => Padding(
+          padding: EdgeInsets.only(
+            left: 20,
+            right: 20,
+            top: 20,
+            bottom: MediaQuery.of(ctx).viewInsets.bottom + 20,
+          ),
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    const Icon(Icons.workspace_premium, color: AppTheme.amberSteel, size: 24),
+                    const SizedBox(width: 8),
+                    const Expanded(
+                      child: Text(
+                        'Yeni Mesleki Sertifika / Belge Ekle',
+                        style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: AppTheme.textLight),
+                      ),
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.close, color: AppTheme.textMuted),
+                      onPressed: () => Navigator.of(ctx).pop(),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 14),
+                TextField(
+                  controller: titleController,
+                  style: const TextStyle(color: AppTheme.textLight),
+                  decoration: const InputDecoration(
+                    labelText: 'Sertifika / Uzmanlık Adı *',
+                    hintText: 'Örn: Autodesk Certified: AutoCAD, SolidWorks CSWP...',
+                    prefixIcon: Icon(Icons.badge_outlined, color: AppTheme.amberSteel),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Row(
+                  children: [
+                    Expanded(
+                      flex: 3,
+                      child: TextField(
+                        controller: issuerController,
+                        style: const TextStyle(color: AppTheme.textLight),
+                        decoration: const InputDecoration(
+                          labelText: 'Veren Kurum / Kuruluş *',
+                          hintText: 'Autodesk, Dassault, MEB, TMMOB...',
+                          prefixIcon: Icon(Icons.business_outlined, color: AppTheme.cyanLine),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      flex: 2,
+                      child: TextField(
+                        controller: yearController,
+                        keyboardType: TextInputType.number,
+                        style: const TextStyle(color: AppTheme.textLight),
+                        decoration: const InputDecoration(
+                          labelText: 'Yıl',
+                          hintText: '2024',
+                          prefixIcon: Icon(Icons.calendar_today_outlined, color: AppTheme.textMuted),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: credIdController,
+                  style: const TextStyle(color: AppTheme.textLight),
+                  decoration: const InputDecoration(
+                    labelText: 'Sertifika No / Doğrulama Kodu (Opsiyonel)',
+                    hintText: 'Örn: CSWP-982341 veya Lisans Kodu',
+                    prefixIcon: Icon(Icons.qr_code, color: AppTheme.cyanLine),
+                  ),
+                ),
+                const SizedBox(height: 14),
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: AppTheme.blueprintSurface,
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(color: AppTheme.steelBorder),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(
+                        certFileName != null ? Icons.check_circle : Icons.upload_file,
+                        color: certFileName != null ? AppTheme.statusSuccess : AppTheme.cyanLine,
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              certFileName ?? 'Sertifika Belgesi Ekle (Opsiyonel)',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.bold,
+                                color: certFileName != null ? AppTheme.textLight : AppTheme.textMuted,
+                              ),
+                            ),
+                            Text(
+                              certFileName != null
+                                  ? FileHelper.formatFileSize(certFileSize ?? 0)
+                                  : 'PDF, JPG veya PNG formatında',
+                              style: const TextStyle(fontSize: 10, color: AppTheme.textMuted),
+                            ),
+                          ],
+                        ),
+                      ),
+                      TextButton.icon(
+                        style: TextButton.styleFrom(
+                          foregroundColor: AppTheme.cyanLine,
+                          padding: const EdgeInsets.symmetric(horizontal: 10),
+                        ),
+                        icon: const Icon(Icons.attach_file, size: 16),
+                        label: Text(certFileName != null ? 'Değiştir' : 'Dosya Seç'),
+                        onPressed: () async {
+                          final res = await FilePicker.pickFiles(
+                            type: FileType.custom,
+                            allowedExtensions: ['pdf', 'jpg', 'jpeg', 'png'],
+                          );
+                          if (res.isNotEmpty && res.first.path != null) {
+                            final picked = res.first;
+                            final path = picked.path!;
+                            final file = File(path);
+                            final bytes = await file.readAsBytes();
+                            setModalState(() {
+                              certFileName = picked.name;
+                              certFilePath = path;
+                              certFileSize = bytes.length;
+                              if (bytes.length <= 500 * 1024) {
+                                certBase64 = base64Encode(bytes);
+                              }
+                            });
+                          }
+                        },
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 20),
+                SizedBox(
+                  width: double.infinity,
+                  height: 48,
+                  child: ElevatedButton.icon(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppTheme.amberSteel,
+                      foregroundColor: AppTheme.blueprintDark,
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                    ),
+                    icon: const Icon(Icons.verified, size: 20),
+                    label: const Text(
+                      'SERTİFİKAYI EKLE',
+                      style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, letterSpacing: 0.5),
+                    ),
+                    onPressed: () {
+                      final title = titleController.text.trim();
+                      final issuer = issuerController.text.trim();
+                      if (title.isEmpty) {
+                        ScaffoldMessenger.of(ctx).showSnackBar(
+                          const SnackBar(
+                            backgroundColor: AppTheme.statusDanger,
+                            content: Text('Lütfen sertifika adını giriniz.'),
+                          ),
+                        );
+                        return;
+                      }
+                      final newCert = CertificateItem(
+                        id: 'cert_${DateTime.now().millisecondsSinceEpoch}',
+                        title: title,
+                        issuer: issuer.isNotEmpty ? issuer : 'Yetkili Kurum',
+                        issueYear: yearController.text.trim(),
+                        credentialId: credIdController.text.trim().isNotEmpty
+                            ? credIdController.text.trim()
+                            : null,
+                        fileName: certFileName,
+                        filePath: certFilePath,
+                        fileBase64: certBase64,
+                        fileSize: certFileSize,
+                        dateAdded: DateTime.now(),
+                      );
+                      setState(() {
+                        _certificates.add(newCert);
+                      });
+                      Navigator.of(ctx).pop();
+                    },
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildCompactCertificatesCard() {
+    return _buildSectionCard(
+      title: 'Mesleki Sertifikalar & Yetkinlikler (${_certificates.length})',
+      icon: Icons.workspace_premium,
+      trailing: ElevatedButton.icon(
+        style: ElevatedButton.styleFrom(
+          backgroundColor: AppTheme.amberSteel,
+          foregroundColor: AppTheme.blueprintDark,
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+          minimumSize: Size.zero,
+          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        ),
+        icon: const Icon(Icons.add, size: 14),
+        label: const Text('Sertifika Ekle', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
+        onPressed: _showAddCertificateDialog,
+      ),
+      child: _certificates.isEmpty
+          ? Container(
+              padding: const EdgeInsets.symmetric(vertical: 14),
+              alignment: Alignment.center,
+              child: const Column(
+                children: [
+                  Icon(Icons.workspace_premium_outlined, color: AppTheme.textSubtle, size: 28),
+                  SizedBox(height: 6),
+                  Text(
+                    'Henüz sertifika eklenmedi.',
+                    style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: AppTheme.textLight),
+                  ),
+                  SizedBox(height: 2),
+                  Text(
+                    'Autodesk, SolidWorks, Revit, Tekla veya MYK belgelerinizi ekleyin; şirketler yetkinliklerinize göre size doğrudan iş teklifi iletsin.',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(fontSize: 11, color: AppTheme.textMuted),
+                  ),
+                ],
+              ),
+            )
+          : Column(
+              children: _certificates.map((cert) {
+                return Container(
+                  margin: const EdgeInsets.only(bottom: 8),
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                  decoration: BoxDecoration(
+                    color: AppTheme.blueprintDark,
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: AppTheme.amberSteel.withValues(alpha: 0.35)),
+                  ),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.center,
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.all(6),
+                        decoration: BoxDecoration(
+                          color: AppTheme.amberSteel.withValues(alpha: 0.15),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: const Icon(Icons.military_tech, color: AppTheme.amberSteel, size: 22),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              cert.title,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: AppTheme.textLight),
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              '${cert.issuer}${cert.issueYear.isNotEmpty ? ' • ${cert.issueYear}' : ''}',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(fontSize: 10, color: AppTheme.cyanLine),
+                            ),
+                            if (cert.credentialId != null && cert.credentialId!.isNotEmpty) ...[
+                              const SizedBox(height: 2),
+                              Text(
+                                'No: ${cert.credentialId!}',
+                                style: const TextStyle(fontSize: 9, color: AppTheme.textMuted, fontFamily: 'monospace'),
+                              ),
+                            ],
+                          ],
+                        ),
+                      ),
+                      if (cert.fileName != null)
+                        IconButton(
+                          icon: const Icon(Icons.visibility_outlined, size: 18, color: AppTheme.cyanLine),
+                          tooltip: 'Belgeyi Görüntüle',
+                          visualDensity: VisualDensity.compact,
+                          onPressed: () => _openCertificateFile(cert),
+                        ),
+                      IconButton(
+                        icon: const Icon(Icons.delete_outline, size: 18, color: AppTheme.statusDanger),
+                        tooltip: 'Sil',
+                        visualDensity: VisualDensity.compact,
+                        onPressed: () => _removeCertificate(cert.id),
+                      ),
+                    ],
+                  ),
+                );
+              }).toList(),
+            ),
+    );
+  }
+
   Widget _buildCompactPortfolioCard() {
     return _buildSectionCard(
       title: 'Portföy Çizimleri & Dosyalar (${_portfolioFiles.length})',
@@ -2068,7 +2707,9 @@ class _DraftsmanProfileViewState extends State<DraftsmanProfileView> {
               _buildCompactContactCard(),
               _buildCompactEDevletCard(),
               _buildCompactSkillsCard(),
+              _buildCompactCertificatesCard(),
               _buildCompactPortfolioCard(),
+              const BatteryOptimizationCard(),
               const SizedBox(height: 10),
               SizedBox(
                 width: double.infinity,

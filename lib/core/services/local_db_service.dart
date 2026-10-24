@@ -1,6 +1,8 @@
 import 'dart:convert';
+import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:hive_flutter/hive_flutter.dart';
+import 'package:path_provider/path_provider.dart';
 import '../models/user_profile.dart';
 import '../models/offer_model.dart';
 
@@ -35,6 +37,7 @@ class LocalDbService {
     }
 
     _isInitialized = true;
+    await syncPendingBackgroundOffers();
     debugPrint('LocalDbService initialized with encrypted local boxes.');
   }
 
@@ -111,6 +114,37 @@ class LocalDbService {
     await saveUserProfile(updatedProfile);
   }
 
+  Future<void> addCertificate(CertificateItem certificate) async {
+    final profile = await getUserProfile();
+    if (profile == null) return;
+
+    final updated = List<CertificateItem>.from(profile.certificates)
+      ..removeWhere((c) => c.id == certificate.id)
+      ..add(certificate);
+
+    final updatedProfile = profile.copyWith(
+      certificates: updated,
+      updatedAt: DateTime.now(),
+    );
+
+    await saveUserProfile(updatedProfile);
+  }
+
+  Future<void> removeCertificate(String certificateId) async {
+    final profile = await getUserProfile();
+    if (profile == null) return;
+
+    final updated = List<CertificateItem>.from(profile.certificates)
+      ..removeWhere((c) => c.id == certificateId);
+
+    final updatedProfile = profile.copyWith(
+      certificates: updated,
+      updatedAt: DateTime.now(),
+    );
+
+    await saveUserProfile(updatedProfile);
+  }
+
   // --- OFFERS OPERATIONS ---
 
   String _cleanId(String id) => id
@@ -119,8 +153,61 @@ class LocalDbService {
       .replaceAll('did:ko:comp:', '')
       .trim();
 
+  Future<void> syncPendingBackgroundOffers() async {
+    try {
+      final dir = await getApplicationDocumentsDirectory();
+      final pendingDir = Directory('${dir.path}/pending_bg_offers');
+      if (!await pendingDir.exists()) return;
+
+      final entities = pendingDir.listSync();
+      for (final entity in entities) {
+        if (entity is File && entity.path.endsWith('.json')) {
+          try {
+            final content = await entity.readAsString();
+            final map = json.decode(content) as Map<String, dynamic>;
+            if (entity.path.contains('/offer_')) {
+              final offer = OfferModel.fromMap(map);
+              await saveOfferIfNew(offer);
+            } else if (entity.path.contains('/response_')) {
+              final offerId = map['offerId'] as String?;
+              final status = map['status'] as String?;
+              final note = map['responseNote'] as String?;
+              final draftsmanEmail = map['draftsmanEmail'] as String?;
+              final draftsmanPhone = map['draftsmanPhone'] as String?;
+              final draftsmanCity = map['draftsmanCity'] as String?;
+              final draftsmanTitle = map['draftsmanTitle'] as String?;
+              final draftsmanBio = map['draftsmanBio'] as String?;
+              final draftsmanLinkedin = map['draftsmanLinkedin'] as String?;
+              final draftsmanKariyerNet = map['draftsmanKariyerNet'] as String?;
+              if (offerId != null && status != null) {
+                await updateOfferStatus(
+                  offerId,
+                  status,
+                  responseNote: note,
+                  draftsmanEmail: draftsmanEmail,
+                  draftsmanPhone: draftsmanPhone,
+                  draftsmanCity: draftsmanCity,
+                  draftsmanTitle: draftsmanTitle,
+                  draftsmanBio: draftsmanBio,
+                  draftsmanLinkedin: draftsmanLinkedin,
+                  draftsmanKariyerNet: draftsmanKariyerNet,
+                );
+              }
+            }
+            await entity.delete();
+          } catch (e) {
+            debugPrint('Error syncing pending bg offer file ${entity.path}: $e');
+          }
+        }
+      }
+    } catch (e) {
+      debugPrint('Error in syncPendingBackgroundOffers: $e');
+    }
+  }
+
   Future<List<OfferModel>> getOffers({String? forDraftsmanId, String? forCompanyId}) async {
     await _ensureInit();
+    await syncPendingBackgroundOffers();
     final List<OfferModel> offers = [];
     final keys = _offersBox?.keys ?? [];
 
@@ -409,6 +496,16 @@ class LocalDbService {
     await _settingsBox?.delete('company_license_data');
     await _settingsBox?.put('is_company_subscribed', false);
     await _settingsBox?.put('subscription_tier', 'Ücretsiz');
+  }
+
+  Future<bool> isBatteryDialogDismissed() async {
+    await init();
+    return (_settingsBox?.get('battery_dialog_dismissed') as bool?) ?? false;
+  }
+
+  Future<void> setBatteryDialogDismissed(bool dismissed) async {
+    await init();
+    await _settingsBox?.put('battery_dialog_dismissed', dismissed);
   }
 
   Future<void> _ensureInit() async {

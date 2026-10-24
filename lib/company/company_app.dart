@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import '../core/models/user_profile.dart';
 import '../core/services/local_db_service.dart';
@@ -5,6 +6,9 @@ import '../core/services/p2p_service.dart';
 import '../core/services/background_service.dart';
 import '../core/theme/app_theme.dart';
 import '../core/widgets/quick_login_view.dart';
+import '../core/widgets/account_removal_dialog.dart';
+import '../core/widgets/battery_optimization_dialog.dart';
+import '../core/services/recovery_key_backup_service.dart';
 import 'views/company_search_view.dart';
 import 'views/company_sent_offers_view.dart';
 import 'views/company_profile_view.dart';
@@ -25,6 +29,7 @@ class _CompanyAppState extends State<CompanyApp> with WidgetsBindingObserver {
   bool _isLoggedIn = true;
   bool _isEditingProfile = false;
   int _currentIndex = 0;
+  int _profileViewEpoch = 0;
 
   @override
   void initState() {
@@ -47,55 +52,115 @@ class _CompanyAppState extends State<CompanyApp> with WidgetsBindingObserver {
   }
 
   Future<void> _checkCompanyProfile() async {
-    final profile = await _localDb.getUserProfile();
-    final loggedIn = await _localDb.isUserLoggedIn();
+    try {
+      final profile = await _localDb.getUserProfile();
+      final loggedIn = await _localDb.isUserLoggedIn();
 
-    if (profile != null && loggedIn) {
-      await _p2pService.start(userProfile: profile);
-      await _p2pService.listenBranch('all');
-      await _p2pService.scanNetwork();
-      await BackgroundService.start(profile);
-    }
+      if (profile != null && loggedIn) {
+        await _p2pService.start(userProfile: profile).timeout(
+          const Duration(seconds: 4),
+          onTimeout: () {
+            debugPrint('Company P2PService start timed out; continuing in background');
+          },
+        );
+        unawaited(_p2pService.listenBranch('all'));
+        unawaited(_p2pService.scanNetwork());
+        unawaited(BackgroundService.start(profile));
+      }
 
-    if (mounted) {
-      setState(() {
-        _companyProfile = profile;
-        _isLoggedIn = loggedIn;
-        _isLoading = false;
-        _isEditingProfile = false;
-      });
+      if (mounted) {
+        setState(() {
+          _companyProfile = profile;
+          _isLoggedIn = loggedIn;
+          _isLoading = false;
+          _isEditingProfile = false;
+        });
+
+        if (profile != null && loggedIn) {
+          Future.delayed(const Duration(milliseconds: 1500), () {
+            if (mounted) {
+              BatteryOptimizationDialog.checkAndShow(context);
+            }
+          });
+        }
+      }
+    } catch (e, stack) {
+      debugPrint('Error in _checkCompanyProfile: $e\n$stack');
+      if (mounted) setState(() => _isLoading = false);
     }
   }
 
   Future<void> _connectSession() async {
     if (_companyProfile == null) return;
     setState(() => _isLoading = true);
-    await _localDb.setLoggedIn(true);
-    await _p2pService.start(userProfile: _companyProfile!);
-    await _p2pService.listenBranch('all');
-    await _p2pService.scanNetwork();
-    await BackgroundService.start(_companyProfile!);
-    if (mounted) {
-      setState(() {
-        _isLoggedIn = true;
-        _isLoading = false;
-      });
+    try {
+      await _localDb.setLoggedIn(true);
+      await _p2pService.start(userProfile: _companyProfile!).timeout(
+        const Duration(seconds: 4),
+        onTimeout: () {
+          debugPrint('Company P2PService start timed out; continuing in background');
+        },
+      );
+      unawaited(_p2pService.listenBranch('all'));
+      unawaited(_p2pService.scanNetwork());
+      unawaited(BackgroundService.start(_companyProfile!));
+    } catch (e, stack) {
+      debugPrint('Error in _connectSession: $e\n$stack');
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isLoggedIn = true;
+          _isLoading = false;
+        });
+      }
     }
+  }
+
+  Future<void> _deleteCurrentAccount() async {
+    final res = await AccountRemovalDialog.confirm(
+      context: context,
+      title: 'Şirket Hesabını Kalıcı Olarak Sil',
+      message:
+          'Şirket profiliniz, kimlik anahtarlarınız ve bu cihazdaki tüm teklifleriniz kalıcı olarak silinecektir.',
+      profile: _companyProfile,
+      confirmLabel: 'KALICI OLARAK SİL',
+    );
+    final handled = await _handleRemovalResult(res);
+    if (handled) return;
+    if (!mounted) return;
+
+    setState(() => _isLoading = true);
+    await BackgroundService.stop();
+    await _p2pService.dispose();
+    await _localDb.deleteUserProfile();
+    await _localDb.clearAllOffers();
+    _profileViewEpoch++;
+    await _checkCompanyProfile();
+  }
+
+  /// Returns true when the removal was cancelled or the account was restored.
+  Future<bool> _handleRemovalResult(RemovalResult res) async {
+    if (res.decision == RemovalDecision.restoreBackup && res.backup != null) {
+      await RecoveryKeyBackupService().restoreToLocal(res.backup!);
+      await _checkCompanyProfile();
+      return true;
+    }
+    return res.decision != RemovalDecision.confirmDelete;
   }
 
   @override
   Widget build(BuildContext context) {
-    if (_isLoading) {
-      return const Scaffold(
-        backgroundColor: AppTheme.blueprintDark,
-        body: Center(
-          child: CircularProgressIndicator(color: AppTheme.cyanLine),
-        ),
-      );
-    }
-
     if (_companyProfile == null || _isEditingProfile) {
+      if (_isLoading) {
+        return const Scaffold(
+          backgroundColor: AppTheme.blueprintDark,
+          body: Center(
+            child: CircularProgressIndicator(color: AppTheme.cyanLine),
+          ),
+        );
+      }
       return CompanyProfileView(
+        key: ValueKey('company_profile_$_profileViewEpoch'),
         onProfileSaved: () => _checkCompanyProfile(),
       );
     }
@@ -106,23 +171,26 @@ class _CompanyAppState extends State<CompanyApp> with WidgetsBindingObserver {
         isLoading: _isLoading,
         onConnect: _connectSession,
         onEditProfile: () => setState(() => _isEditingProfile = true),
-        onSwitchAccount: () => setState(() {
-          _isEditingProfile = true;
-        }),
-        onDeleteAccount: () async {
-          await BackgroundService.stop();
-          await _p2pService.dispose();
-          await _localDb.deleteUserProfile();
-          await _localDb.clearAllOffers();
-          await _checkCompanyProfile();
-        },
+        onDeleteAccount: _deleteCurrentAccount,
+      );
+    }
+
+    if (_isLoading) {
+      return const Scaffold(
+        backgroundColor: AppTheme.blueprintDark,
+        body: Center(
+          child: CircularProgressIndicator(color: AppTheme.cyanLine),
+        ),
       );
     }
 
     final List<Widget> pages = [
       const CompanySearchView(),
       const CompanySentOffersView(),
-      CompanyProfileView(onProfileSaved: () => _checkCompanyProfile()),
+      CompanyProfileView(
+        key: ValueKey('company_profile_$_profileViewEpoch'),
+        onProfileSaved: () => _checkCompanyProfile(),
+      ),
     ];
 
     return Scaffold(

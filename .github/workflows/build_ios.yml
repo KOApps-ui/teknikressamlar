@@ -5,6 +5,9 @@ on:
     branches: [ main, master ]
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build-ios:
     runs-on: macos-latest
@@ -32,9 +35,22 @@ jobs:
           zip -r KO_Apps_TeknikRessam.ipa Payload
           rm -rf Payload
 
-      - name: IPA Dosyasını Yayınla / Yükle
+      - name: IPA Dosyasını Yayınla / Yükle (Artifact)
         uses: actions/upload-artifact@v4
         with:
           name: KO_Apps_TeknikRessam_iOS_IPA
           path: KO_Apps_TeknikRessam.ipa
-          retention-days: 7
+          retention-days: 14
+
+      - name: GitHub Release Olarak Yayınla
+        uses: softprops/action-gh-release@v2
+        if: success()
+        with:
+          tag_name: latest
+          name: "KO|Apps - Teknik Ressamlar (Son Sürüm - iOS & Android)"
+          draft: false
+          prerelease: false
+          files: |
+            KO_Apps_TeknikRessam.ipa
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

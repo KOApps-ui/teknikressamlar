@@ -7,6 +7,7 @@ import '../models/user_profile.dart';
 import 'crypto_service.dart';
 import 'local_db_service.dart';
 import 'nostr_service.dart';
+import 'recovery_key_backup_service.dart';
 
 class AuthResult {
   final bool isSuccess;
@@ -98,31 +99,12 @@ class AuthService {
         debugPrint('Relay metadata fetch error on restore: $e');
       }
 
-      final restoredProfile = UserProfile(
-        id: userId,
-        name: (remoteMetadata?['name'] as String?)?.isNotEmpty == true
-            ? remoteMetadata!['name'] as String
-            : (role == 'company' ? 'Şirket Hesabı' : 'Teknik Ressam'),
-        email: remoteMetadata?['email'] as String? ?? '',
-        phone: remoteMetadata?['phone'] as String? ?? '',
-        role: remoteMetadata?['role'] as String? ?? role,
-        branch: remoteMetadata?['branch'] as String? ?? 'Çelik Yapı & Konstrüksiyon',
-        title: remoteMetadata?['title'] as String? ?? (role == 'company' ? 'İşveren Temsilcisi' : 'Teknik Ressam'),
-        experienceYears: remoteMetadata?['experienceYears'] as int? ?? (role == 'company' ? 0 : 3),
-        bio: remoteMetadata?['bio'] as String? ?? '',
-        softwareSkills: List<String>.from(remoteMetadata?['softwareSkills'] as List? ?? (role == 'company' ? [] : ['AutoCAD'])),
-        city: remoteMetadata?['city'] as String? ?? 'İstanbul',
-        portfolioFiles: [],
-        publicKey: pubKey,
-        privateKey: validPriv,
-        authProvider: 'local_did',
-        avatarBase64: remoteMetadata?['avatarBase64'] as String?,
-        isVerified: remoteMetadata?['isVerified'] as bool? ?? false,
-        verificationBadge: remoteMetadata?['verificationBadge'] as String?,
-        diplomaBarcode: remoteMetadata?['diplomaBarcode'] as String?,
-        createdAt: DateTime.now(),
-        updatedAt: DateTime.now(),
-        isAvailable: true,
+      final restoredProfile = await _buildRestoredProfile(
+        userId: userId,
+        pubKey: pubKey,
+        validPriv: validPriv,
+        role: role,
+        remoteMetadata: remoteMetadata,
       );
 
       await _localDb.saveUserProfile(restoredProfile);
@@ -131,6 +113,85 @@ class AuthService {
     } catch (e) {
       return AuthResult(isSuccess: false, errorMessage: 'Hesap kurtarma hatası: $e');
     }
+  }
+
+  /// Rebuilds the account from the local snapshot (portfolio, CV, avatar,
+  /// badges) when one exists for this key, otherwise falls back to relay
+  /// metadata / defaults.
+  Future<UserProfile> _buildRestoredProfile({
+    required String userId,
+    required String pubKey,
+    required String validPriv,
+    required String role,
+    required Map<String, dynamic>? remoteMetadata,
+  }) async {
+    // 1) A live local profile with the same keys must never be wiped.
+    final liveProfile = await _localDb.getUserProfile();
+    final liveMatches = liveProfile != null &&
+        liveProfile.publicKey.trim().toLowerCase() == pubKey.toLowerCase() &&
+        liveProfile.privateKey.trim().toLowerCase() == validPriv.toLowerCase();
+
+    // 2) Otherwise fall back to the local snapshot (profile + offers).
+    final snapshot = liveMatches
+        ? null
+        : await RecoveryKeyBackupService().loadBackupByPublicKey(pubKey);
+    if (snapshot != null) {
+      for (final offer in snapshot.offers) {
+        await _localDb.saveOfferIfNew(offer);
+      }
+    }
+
+    final UserProfile? sourceProfile = liveMatches ? liveProfile : snapshot?.profile;
+    if (sourceProfile != null) {
+      final map = Map<String, dynamic>.from(sourceProfile.toMap());
+      map['id'] = userId;
+      map['publicKey'] = pubKey;
+      map['privateKey'] = validPriv;
+      map['updatedAt'] = DateTime.now().toIso8601String();
+      map['isAvailable'] = true;
+
+      // Fill empty gaps (name, city, ...) from relay metadata if available.
+      if (remoteMetadata != null) {
+        for (final entry in remoteMetadata.entries) {
+          final current = map[entry.key];
+          final isEmptyValue = current == null || (current is String && current.trim().isEmpty);
+          if (isEmptyValue && entry.value != null) {
+            map[entry.key] = entry.value;
+          }
+        }
+      }
+      map['id'] = userId;
+      map['publicKey'] = pubKey;
+      map['privateKey'] = validPriv;
+      return UserProfile.fromMap(map);
+    }
+
+    return UserProfile(
+      id: userId,
+      name: (remoteMetadata?['name'] as String?)?.isNotEmpty == true
+          ? remoteMetadata!['name'] as String
+          : (role == 'company' ? 'Şirket Hesabı' : 'Teknik Ressam'),
+      email: remoteMetadata?['email'] as String? ?? '',
+      phone: remoteMetadata?['phone'] as String? ?? '',
+      role: remoteMetadata?['role'] as String? ?? role,
+      branch: remoteMetadata?['branch'] as String? ?? 'Çelik Yapı & Konstrüksiyon',
+      title: remoteMetadata?['title'] as String? ?? (role == 'company' ? 'İşveren Temsilcisi' : 'Teknik Ressam'),
+      experienceYears: remoteMetadata?['experienceYears'] as int? ?? (role == 'company' ? 0 : 3),
+      bio: remoteMetadata?['bio'] as String? ?? '',
+      softwareSkills: List<String>.from(remoteMetadata?['softwareSkills'] as List? ?? (role == 'company' ? [] : ['AutoCAD'])),
+      city: remoteMetadata?['city'] as String? ?? 'İstanbul',
+      portfolioFiles: [],
+      publicKey: pubKey,
+      privateKey: validPriv,
+      authProvider: 'local_did',
+      avatarBase64: remoteMetadata?['avatarBase64'] as String?,
+      isVerified: remoteMetadata?['isVerified'] as bool? ?? false,
+      verificationBadge: remoteMetadata?['verificationBadge'] as String?,
+      diplomaBarcode: remoteMetadata?['diplomaBarcode'] as String?,
+      createdAt: DateTime.now(),
+      updatedAt: DateTime.now(),
+      isAvailable: true,
+    );
   }
 
   /// Google Sign-In authentication.

@@ -14,7 +14,7 @@
 
 **Teknik Ressamlar**, mimarlık, makine, inşaat, elektrik ve harita mühendisliği alanlarında uzman teknik ressamlar ile imalatçı, müşavir ve taahhüt şirketlerini **hiçbir aracı sunucuya ihtiyaç duymaksızın doğrudan (P2P)** buluşturan devrimsel bir mobil & masaüstü platformudur.
 
-[📱 Android APK İndir](https://github.com/KOApps-ui/teknikressamlar/releases) • [🍏 iOS IPA Indir]([#-ios-kurulumu-ve-ipa-derleme](https://github.com/KOApps-ui/teknikressamlar/releases)) • [✨ Temel Özellikler](#-öne-çıkan-özellikler) • [🛡️ Güvenlik ve Gizlilik](#%EF%B8%8F-askeri-düzeyde-güvenlik-ve-gizlilik)
+[📱 Android APK İndir](https://github.com/KOApps-ui/teknikressamlar/releases) • [🍏 iOS IPA Indir]((https://github.com/KOApps-ui/teknikressamlar/releases)) • [✨ Temel Özellikler](#-öne-çıkan-özellikler) • [🛡️ Güvenlik ve Gizlilik](#%EF%B8%8F-askeri-düzeyde-güvenlik-ve-gizlilik)
 
 ---
 

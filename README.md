@@ -11,20 +11,18 @@
 ```
 
 # 📐 KO|Apps - Teknik Ressamlar
-### *Yeni Nesil Merkeziyetsiz, Şifreli Mühendislik & Teknik Çizim Ekosistemi*
+### *Teknik Ressamların Dijital Vitrini & Doğrudan Teklif Ekosistemi*
 
-[![Flutter](https://img.shields.io/badge/Flutter-3.47.2-02569B?style=for-the-badge&logo=flutter&logoColor=white)](https://flutter.dev)
-[![Dart](https://img.shields.io/badge/Dart-3.13.2-0175C2?style=for-the-badge&logo=dart&logoColor=white)](https://dart.dev)
+[![Platform](https://img.shields.io/badge/Platform-Android%20APK-3DDC84?style=for-the-badge&logo=android&logoColor=white)](https://github.com/KOApps-ui/teknikressamlar/raw/main/KO_Apps_TeknikRessam.apk)
 [![Architecture](https://img.shields.io/badge/P2P-Nostr%20%2B%20UDP-FF9900?style=for-the-badge&logo=rss&logoColor=white)](https://nostr.com)
 [![Encryption](https://img.shields.io/badge/Security-X25519%20%2B%20ChaCha20-00C853?style=for-the-badge&logo=lock&logoColor=white)](https://en.wikipedia.org/wiki/Curve25519)
-[![Platform](https://img.shields.io/badge/Platforms-Android%20%7C%20iOS%20%7C%20Linux-455A64?style=for-the-badge&logo=android&logoColor=white)](https://github.com/KOApps-ui/teknikressamlar)
-[![License](https://img.shields.io/badge/License-Proprietary-D32F2F?style=for-the-badge)](LICENSE)
+[![License](https://img.shields.io/badge/Lisans-Proprietary-D32F2F?style=for-the-badge)](README.md)
 
 <br/>
 
-**Teknik Ressamlar**, mimarlık, makine, inşaat, elektrik ve harita mühendisliği alanlarında uzman teknik ressamlar ile imalatçı, müşavir ve taahhüt şirketlerini **hiçbir aracı sunucuya ihtiyaç duymaksızın doğrudan (P2P)** buluşturan devrimsel bir mobil & masaüstü platformudur.
+**Teknik Ressamlar**, imalat, makine, mimari, çelik yapı, mobilya ve elektrik alanlarındaki teknik ressamlar ile çizime ihtiyacı olan atölye, fabrika ve işverenleri **aracı komisyonu olmadan doğrudan (P2P)** buluşturan bağımsız bir vitrin uygulamasıdır.
 
-[📱 Android APK İndir](https://github.com/KOApps-ui/teknikressamlar/releases) • [🍏 iOS Kurulum Rehberi](#-ios-kurulumu-ve-ipa-derleme) • [✨ Temel Özellikler](#-öne-çıkan-özellikler) • [🛡️ Güvenlik ve Gizlilik](#%EF%B8%8F-askeri-düzeyde-güvenlik-ve-gizlilik)
+[📥 Android APK İndir (97 MB)](https://github.com/KOApps-ui/teknikressamlar/raw/main/KO_Apps_TeknikRessam.apk) • [✨ Temel Özellikler](#-öne-çıkan-özellikler) • [📱 Kurulum](#-android-kurulum-rehberi) • [🛡️ Güvenlik](#%EF%B8%8F-askeri-düzeyde-güvenlik-ve-gizlilik)
 
 ---
 
@@ -32,29 +30,29 @@
 
 ## 💡 Neden Teknik Ressamlar?
 
-Geleneksel iş arama ve serbest çalışan platformları yüksek komisyon oranları, merkezi veri sızıntıları ve teknik çizim dosyalarının boyut sınırlarıyla mühendislik dünyasının ihtiyaçlarına yanıt verememektedir.
+Geleneksel aracı platformlar yüksek komisyon oranları, merkezi veri havuzları ve CAD dosyalarının boyut sınırlarıyla teknik çizim sektörünün dinamiklerine yanıt verememektedir.
 
-**KO|Apps Teknik Ressamlar**, merkezi sunucu modelini tamamen ortadan kaldırır. Tüm iletişim ve teklif alışverişi, kullanıcıların kendi cihazlarında yerel olarak üretilen kriptografik anahtarlarla şifrelenir; veriler yalnızca tarafların cihazlarında ve güvenilir P2P rölelerinde yaşar.
+**KO|Apps Teknik Ressamlar**, aracı sunucuları ortadan kaldırır. Teknik ressamlar yetkinliklerini, sertifikalarını ve çizimlerini özgürce sergiler; işverenler ise ihtiyaç duydukları teknik ressamı vitrinde seçip doğrudan teknik şartname ve CAD dosyası ekli iş teklifleri iletir.
 
 ```mermaid
 graph LR
-    subgraph Sirket ["🏢 İŞVEREN ŞİRKET"]
-        C_Key["DID / Nostr Özel Anahtar"]
-        C_Offer["CAD/BIM Teklifi + DWG/STEP"]
+    subgraph Isveren ["🏢 İŞVEREN"]
+        C_Key["DID / Şifreli Kimlik"]
+        C_Offer["Teklif + DWG / STEP Paftaları"]
     end
 
-    subgraph Ag ["⚡ ŞİFRELİ P2P DAĞITIM KATMANI"]
+    subgraph Ag ["⚡ ŞİFRELİ P2P DAĞITIM AĞI"]
         Relay["Nostr WSS Röleleri"]
-        UDP["Yerel Ağ UDP Broadcast"]
+        UDP["Yerel Ağ Doğrudan Keşif"]
     end
 
     subgraph Ressam ["📐 TEKNİK RESSAM"]
-        D_Key["DID / Nostr Özel Anahtar"]
-        D_Vault["Şifreli Portföy & CV"]
+        D_Key["DID / Şifreli Kimlik"]
+        D_Vault["Şifreli Çizim Vitrini & Portföy"]
     end
 
     C_Offer -->|Uçtan Uca Şifreli (X25519)| Relay
-    C_Offer -->|Yerel Keşif (Zero-Config)| UDP
+    C_Offer -->|Yerel Ağ Keşfi| UDP
     Relay -->|Doğrudan Teslimat| D_Vault
     UDP -->|Anında Bildirim| D_Vault
 ```
@@ -72,7 +70,7 @@ graph LR
 - **Sıfır Sunucu Kaydı:** Mesajlar veya çizimler üçüncü taraf hiçbir şirketin veya bulut sağlayıcının veri tabanında saklanmaz.
 
 ### 📐 3. Kapsamlı CAD / BIM / 3D Proje Dosyası Yönetimi
-Şirketler teklif oluştururken her türlü mühendislik formatını doğrudan ekleyebilir:
+İşverenler teklif oluştururken her türlü teknik çizim formatını doğrudan ekleyebilir:
 - **2D CAD:** AutoCAD (`.dwg`, `.dxf`)
 - **3D Katı Model:** SolidWorks, Inventor, STEP (`.sldprt`, `.sldasm`, `.ipt`, `.step`, `.stp`)
 - **BIM & Mimari:** Revit, IFC, Navisworks (`.rvt`, `.ifc`, `.nwd`)
@@ -81,99 +79,28 @@ graph LR
 
 ### 🎖️ 4. Resmi e-Devlet & GİB Doğrulama Entegrasyonu
 - **Teknik Ressamlar:** YÖK e-Devlet mezuniyet ve mesleki yeterlilik belgelerini doğrudan PDF'ten barkod okuma ile doğrulayabilir.
-- **Kurumsal Şirketler:** GİB e-Devlet barkodlu vergi levhalarını sisteme yükleyerek profillerine onay rozeti (`✓ GİB / e-Devlet Onaylı`) kazandırabilir.
+- **Kurumsal İşverenler:** GİB e-Devlet barkodlu vergi levhalarını sisteme yükleyerek profillerine onay rozeti (`✓ GİB / e-Devlet Onaylı`) kazandırabilir.
 
 ### 👁️ 5. Gizlilik Korumalı Aday Vitrini
-- Adayların telefon numarası, e-posta adresi, WhatsApp bağlantısı, LinkedIn ve Kariyer.net profilleri teklif öncesinde gizli tutulur.
-- Şirket teklif gönderip aday onayladığı anda bu iletişim kanalları şifreli olarak anında açılır.
+- Ressamların telefon numarası, e-posta adresi, WhatsApp bağlantısı, LinkedIn ve Kariyer.net profilleri teklif öncesinde gizli tutulur.
+- İşveren teklif gönderip teknik ressam onayladığı anda bu iletişim kanalları şifreli tünel üzerinden güvenle açılır.
 
 ### 🔄 6. Canlı Teklif Revizyonu ve Düzenleme
-- Bekleyen (`pending`) veya adayın revize istediği / reddettiği (`rejected`) teklifler silinmek zorunda kalmadan tek tıkla düzenlenebilir.
-- Bütçe, teslimat süresi, açıklama ve CAD ekleri güncellenerek adaya anında yeniden iletilebilir.
+- Bekleyen (`pending`) veya ressamın revize istediği / reddettiği (`rejected`) teklifler silinmek zorunda kalmadan tek tıkla düzenlenebilir.
+- Bütçe, teslimat süresi, açıklama ve CAD ekleri güncellenerek ressama anında yeniden iletilebilir.
 
 ---
 
-## 🛠️ Mimari ve Teknoloji Yığını
+## 📱 Android Kurulum Rehberi
 
-| Katman | Teknoloji / Kütüphane | Açıklama |
-| :--- | :--- | :--- |
-| **Framework** | **Flutter 3.47.2 / Dart 3.13.2** | Çoklu platform (Android, iOS, Linux Desktop, Web) |
-| **P2P İletişim** | **Nostr (NIP-01, NIP-04, NIP-44) + UDP** | Dağıtık WSS röle ağı ve yerel ağ multicast/broadcast |
-| **Kriptografi** | **Cryptography (X25519, ChaCha20-Poly1305)** | Donanım hızlandırmalı modern asimetrik & simetrik şifreleme |
-| **Yerel Veritabanı** | **Hive & Hive Flutter** | Cihaz üzerinde çalışan şifreli, yüksek performanslı NoSQL saklama |
-| **Ağ & Medya** | **flutter_webrtc & file_picker** | P2P sesli iletişim ve sınırsız mühendislik dosyası seçimi |
-| **Belge Ayrıştırma**| **syncfusion_flutter_pdf & google_mlkit**| PDF barkod ve belge metni çıkarma motoru |
+Uygulamanın güncel release sürümü bu depoda doğrudan dağıtılmaktadır:
 
----
+1. **APK Dosyasını İndirin:**  
+   👉 [**KO_Apps_TeknikRessam.apk İndir (97 MB)**](https://github.com/KOApps-ui/teknikressamlar/raw/main/KO_Apps_TeknikRessam.apk)
+2. İndirilen `.apk` dosyasına dokunarak cihazınıza yükleyin (gerekirse *"Bilinmeyen kaynaklardan yüklemeye izin ver"* seçeneğini onaylayın).
+3. Uygulamayı açarak **"Teknik Ressam"** veya **"İşveren Şirket"** rolünüzü seçip kendi vitrininizi oluşturun.
 
-## 📦 Kurulum ve Çalıştırma
-
-### Gereksinimler
-- **Flutter SDK:** >= 3.47.0
-- **Dart SDK:** >= 3.13.0
-- **JDK:** Java 17 veya Java 21
-
-### 1. Depoyu Klonlayın
-```bash
-git clone https://github.com/KOApps-ui/teknikressamlar.git
-cd teknikressamlar
-```
-
-### 2. Bağımlılıkları İndirin
-```bash
-flutter pub get
-```
-
-### 3. Testleri Çalıştırın
-```bash
-flutter test
-```
-
-### 4. Android Release APK Derleme
-```bash
-flutter build apk --release
-# Çıktı: build/app/outputs/flutter-apk/app-release.apk
-```
-
----
-
-## 🍏 iOS Kurulumu ve IPA Derleme
-
-Apple ekosisteminin getirdiği derleme gereksinimleri için iki esnek yöntem hazırlanmıştır:
-
-### A) GitHub Actions ile Otomatik Bulut Derlemesi (Önerilen)
-Depodaki `.github/workflows/build_ios.yml` iş akışı sayesinde, her commit veya manuel tetiklemede GitHub'ın ücretsiz Apple Silicon Mac sunucuları devreye girer:
-1. GitHub deponuzdaki **Actions** sekmesine gidin.
-2. **iOS IPA Derleme** iş akışını seçip **Run workflow** butonuna tıklayın.
-3. Derleme bittiğinde oluşan `KO_Apps_TeknikRessam.ipa` dosyasını indirin.
-4. iPhone'unuza **Sideloadly**, **AltStore** veya **TrollStore** ile yükleyin.
-
-### B) Mac / MacBook Üzerinde Doğrudan Derleme
-Bir Mac bilgisayarda tek bir komutla sertifikasız test IPA'sı üretin:
-```bash
-./scripts/build_ios_on_mac.sh
-```
-
----
-
-## 📂 Proje Dizin Yapısı
-
-```
-lib/
-├── main.dart                       # Uygulama başlangıç ve rol yönlendirici
-├── core/                           # Çekirdek servisler, modeller ve tema
-│   ├── models/                     # UserProfile, OfferModel, Subscription vb.
-│   ├── services/                   # CryptoService, NostrService, P2PService, LocalDb
-│   ├── theme/                      # Blueprint koyu lacivert & amber tema sistemi
-│   ├── utils/                      # FileHelper (CAD/BIM formatları ve dosya boyutları)
-│   └── widgets/                    # BlueprintHeader, PaywallDialog, BlockedUsersDialog
-├── draftsman/                      # Teknik Ressam Modülü
-│   ├── draftsman_app.dart          # Ressam ana navigasyonu
-│   └── views/                      # Profil, CV/Belge yönetimi, gelen iş teklifleri
-└── company/                        # İşveren Şirket Modülü
-    ├── company_app.dart            # Şirket ana navigasyonu
-    └── views/                      # Kompakt şirket profili, aday arama & filtreleme, gönderilen teklifler
-```
+> ℹ️ *Xiaomi / Samsung / Huawei kullanıcıları için:* Ekran kapalıyken teklif bildirimlerinin gecikmemesi adına uygulama içerisindeki **"Pil Optimizasyonunu Devre Dışı Bırak"** uyarısını onaylamanız önerilir.
 
 ---
 
@@ -187,7 +114,7 @@ lib/
 
 <div align="center">
 
-**KO|Apps Teknoloji Çözümleri** tarafından mühendislik dünyasına armağan edilmiştir.  
+**KO|Apps Teknoloji Çözümleri** tarafından teknik ressamlara ve sektöre armağan edilmiştir.  
 *Tüm hakları saklıdır © 2026*
 
 </div>

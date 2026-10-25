@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import '../../core/models/user_profile.dart';
 import '../../core/services/local_db_service.dart';
@@ -37,6 +38,10 @@ class _CompanyAdminViewState extends State<CompanyAdminView> with SingleTickerPr
   List<String> _deletedCandidateIds = [];
   List<Map<String, dynamic>> _auditLogs = [];
 
+  StreamSubscription? _companiesSub;
+  StreamSubscription? _draftsmenSub;
+  StreamSubscription? _auditLogsSub;
+
   static const List<String> _masterPins = ['1080', 'koapps2026', 'koapps2026!'];
 
   @override
@@ -44,10 +49,23 @@ class _CompanyAdminViewState extends State<CompanyAdminView> with SingleTickerPr
     super.initState();
     _tabController = TabController(length: 4, vsync: this);
     _checkVerification();
+
+    _companiesSub = _p2pService.discoveredCompaniesStream.listen((_) {
+      if (mounted && _isVerified) _loadAdminData();
+    });
+    _draftsmenSub = _p2pService.discoveredDraftsmenStream.listen((_) {
+      if (mounted && _isVerified) _loadAdminData();
+    });
+    _auditLogsSub = _p2pService.auditLogsStream.listen((_) {
+      if (mounted && _isVerified) _loadAdminData();
+    });
   }
 
   @override
   void dispose() {
+    _companiesSub?.cancel();
+    _draftsmenSub?.cancel();
+    _auditLogsSub?.cancel();
     _tabController.dispose();
     _pinController.dispose();
     super.dispose();
@@ -58,6 +76,7 @@ class _CompanyAdminViewState extends State<CompanyAdminView> with SingleTickerPr
     if (mounted) {
       setState(() => _isVerified = verified);
       if (verified) {
+        _p2pService.queryDraftsmen();
         _loadAdminData();
       }
     }
@@ -73,6 +92,7 @@ class _CompanyAdminViewState extends State<CompanyAdminView> with SingleTickerPr
           _pinError = null;
         });
         _pinController.clear();
+        _p2pService.queryDraftsmen();
         await _loadAdminData();
       }
     } else {
@@ -94,17 +114,42 @@ class _CompanyAdminViewState extends State<CompanyAdminView> with SingleTickerPr
   }
 
   Future<void> _loadAdminData() async {
-    setState(() => _isLoading = true);
     final deleted = await _localDb.getDeletedCandidates();
     final draftsmen = _p2pService.discoveredDraftsmen;
-    final companies = _p2pService.discoveredCompanies;
+
+    // Combine discovered companies from network with any locally known companies
+    final companiesMap = <String, Map<String, dynamic>>{};
+    for (final c in _p2pService.discoveredCompanies) {
+      final pk = c['publicKey'] as String? ?? c['id'] as String? ?? '';
+      if (pk.isNotEmpty) companiesMap[pk] = c;
+    }
+
+    try {
+      final offers = await _localDb.getOffers();
+      for (final o in offers) {
+        if (o.companyId.isNotEmpty && !companiesMap.containsKey(o.companyId)) {
+          companiesMap[o.companyId] = {
+            'id': o.companyId,
+            'publicKey': o.companyId,
+            'name': o.companyName,
+            'branch': o.projectTitle.isNotEmpty ? o.projectTitle : 'İşveren Şirket',
+            'city': o.companyCity ?? '',
+            'role': 'company',
+            'isVerified': o.companyIsVerified ?? false,
+            'verificationBadge': o.companyVerificationBadge,
+            'companyLogo': o.companyLogoBase64,
+          };
+        }
+      }
+    } catch (_) {}
+
     final logs = _p2pService.auditLogs;
 
     if (mounted) {
       setState(() {
         _deletedCandidateIds = deleted;
         _draftsmen = draftsmen;
-        _companies = companies;
+        _companies = companiesMap.values.toList();
         _auditLogs = logs;
         _isLoading = false;
       });

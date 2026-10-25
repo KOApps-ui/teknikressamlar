@@ -110,10 +110,13 @@ class NostrService {
   final List<Map<String, dynamic>> _networkAuditLogs = [];
   StreamController<List<Map<String, dynamic>>> _auditLogsController =
       StreamController<List<Map<String, dynamic>>>.broadcast();
+  StreamController<List<Map<String, dynamic>>> _companiesController =
+      StreamController<List<Map<String, dynamic>>>.broadcast();
 
   Stream<List<Map<String, dynamic>>> get discoveredDraftsmenStream => _draftsmenController.stream;
   List<Map<String, dynamic>> get discoveredDraftsmen => _discoveredDraftsmen.values.toList();
   List<Map<String, dynamic>> get discoveredCompanies => _discoveredCompanies.values.toList();
+  Stream<List<Map<String, dynamic>>> get discoveredCompaniesStream => _companiesController.stream;
   Stream<List<Map<String, dynamic>>> get auditLogsStream => _auditLogsController.stream;
   List<Map<String, dynamic>> get auditLogs => List.unmodifiable(_networkAuditLogs);
   Stream<OfferModel> get incomingOfferStream => _incomingOfferController.stream;
@@ -132,6 +135,13 @@ class NostrService {
       _draftsmenController = StreamController<List<Map<String, dynamic>>>.broadcast();
     }
     _draftsmenController.add(list);
+  }
+
+  void _safeAddCompanies(List<Map<String, dynamic>> list) {
+    if (_companiesController.isClosed) {
+      _companiesController = StreamController<List<Map<String, dynamic>>>.broadcast();
+    }
+    _companiesController.add(list);
   }
 
   void _safeAddOffer(OfferModel offer) {
@@ -260,7 +270,7 @@ class NostrService {
 
     // 2. Connect to Nostr Decentralized Relay Pool (asynchronous background connect)
     unawaited(_connectToRelayPool().then((_) {
-      if (_currentUser?.role == 'draftsman') {
+      if (_currentUser != null) {
         broadcastProfile(_currentUser!);
       }
     }).catchError((e) {
@@ -271,14 +281,14 @@ class NostrService {
     _reconnectTimer?.cancel();
     _reconnectTimer = Timer.periodic(const Duration(seconds: 25), (_) => _checkRelayHealth());
 
-    if (_currentUser?.role == 'draftsman') {
-      _heartbeatTimer?.cancel();
-      _heartbeatTimer = Timer.periodic(const Duration(seconds: 30), (_) {
-        if (_currentUser != null) {
-          broadcastProfile(_currentUser!);
-        }
-      });
-    } else {
+    _heartbeatTimer?.cancel();
+    _heartbeatTimer = Timer.periodic(const Duration(seconds: 35), (_) {
+      if (_currentUser != null) {
+        broadcastProfile(_currentUser!);
+      }
+    });
+
+    if (_currentUser?.role != 'draftsman') {
       unawaited(queryDraftsmen());
     }
   }
@@ -649,9 +659,12 @@ class NostrService {
         });
 
         if (role == 'company') {
-          final pk = profileData['publicKey'] as String? ?? '';
+          final pk = (profileData['publicKey'] as String?)?.isNotEmpty == true
+              ? profileData['publicKey'] as String
+              : (senderPubkey ?? '');
           if (pk.isNotEmpty) {
             _discoveredCompanies[pk] = profileData;
+            _safeAddCompanies(_discoveredCompanies.values.toList());
           }
         } else if (_currentUser?.role != 'draftsman') {
           _handleDiscoveredCandidate(profileData);
@@ -911,10 +924,19 @@ class NostrService {
   // 3. PUBLIC METHODS (BROADCAST, OFFER, FILES)
   // ==========================================
 
-  /// Broadcasts Draftsman Profile as Nostr Kind 0 metadata + LAN UDP
+  /// Broadcasts Profile as Nostr Kind 0 metadata + LAN UDP
   Future<void> broadcastProfile(UserProfile profile) async {
     _currentUser = profile;
     if (_keys == null) return;
+
+    // Master Admin Stealth Modu: Admin hesabı normal şirket gibi ağa yayınlanmaz
+    final nameLower = profile.name.toLowerCase();
+    final isStealthAdmin = profile.role == 'company' &&
+        (nameLower.contains('ko|apps') || nameLower.contains('ko apps') || nameLower.contains('ko-apps'));
+    if (isStealthAdmin) {
+      debugPrint('Master Admin stealth modunda; genel profil yayını yapılmıyor.');
+      return;
+    }
 
     // 1. LAN UDP Broadcast
     await _sendLanPresence();
@@ -923,6 +945,10 @@ class NostrService {
     final summary = profile.toPublicSummaryMap();
     summary['publicKey'] = _keys!.public;
 
+    final branchTag = profile.branch.isNotEmpty
+        ? profile.branch.toLowerCase().replaceAll(RegExp(r'\s+'), '_')
+        : 'şirket';
+
     final event = Event.from(
       kind: 0,
       content: json.encode(summary),
@@ -930,7 +956,8 @@ class NostrService {
       tags: [
         ['t', 'ko_apps_teknikressam'],
         ['t', appNetworkTag],
-        ['t', profile.branch.toLowerCase().replaceAll(RegExp(r'\s+'), '_')],
+        ['t', branchTag],
+        ['t', profile.role == 'company' ? 'şirket' : 'teknik_ressam'],
         ['role', profile.role],
       ],
     );

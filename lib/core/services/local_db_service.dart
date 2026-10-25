@@ -154,6 +154,7 @@ class LocalDbService {
       .trim();
 
   Future<void> syncPendingBackgroundOffers() async {
+    if (kIsWeb) return;
     try {
       final dir = await getApplicationDocumentsDirectory();
       final pendingDir = Directory('${dir.path}/pending_bg_offers');

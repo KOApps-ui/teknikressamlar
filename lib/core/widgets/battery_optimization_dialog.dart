@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import '../services/background_service.dart';
 import '../services/local_db_service.dart';
@@ -21,7 +22,7 @@ class BatteryOptimizationDialog extends StatefulWidget {
 
   /// Otomatik kontrol eder; eğer pil optimizasyonu aktifse ve kullanıcı engellememişse gösterir.
   static Future<void> checkAndShow(BuildContext context) async {
-    if (!Platform.isAndroid) return;
+    if (kIsWeb || !Platform.isAndroid) return;
     try {
       final isIgnoring = await BackgroundService.isIgnoringBatteryOptimizations();
       if (isIgnoring) return;
@@ -385,7 +386,7 @@ class _BatteryOptimizationCardState extends State<BatteryOptimizationCard> with 
 
   @override
   Widget build(BuildContext context) {
-    if (!Platform.isAndroid) return const SizedBox.shrink();
+    if (kIsWeb || !Platform.isAndroid) return const SizedBox.shrink();
 
     return Container(
       margin: const EdgeInsets.only(bottom: 12),

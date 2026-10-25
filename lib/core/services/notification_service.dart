@@ -29,7 +29,7 @@ class NotificationService {
         },
       );
 
-      if (Platform.isAndroid) {
+      if (!kIsWeb && Platform.isAndroid) {
         final androidPlugin = _plugin.resolvePlatformSpecificImplementation<
             AndroidFlutterLocalNotificationsPlugin>();
         await androidPlugin?.requestNotificationsPermission();

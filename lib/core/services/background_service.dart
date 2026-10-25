@@ -19,7 +19,7 @@ class BackgroundService {
   BackgroundService._internal();
 
   static void init() {
-    if (!Platform.isAndroid) return;
+    if (kIsWeb || !Platform.isAndroid) return;
     FlutterForegroundTask.init(
       androidNotificationOptions: AndroidNotificationOptions(
         channelId: 'ko_apps_bg_listener_v2',
@@ -47,17 +47,17 @@ class BackgroundService {
   }
 
   static Future<bool> isIgnoringBatteryOptimizations() async {
-    if (!Platform.isAndroid) return true;
+    if (kIsWeb || !Platform.isAndroid) return true;
     return await FlutterForegroundTask.isIgnoringBatteryOptimizations;
   }
 
   static Future<bool> requestIgnoreBatteryOptimization() async {
-    if (!Platform.isAndroid) return true;
+    if (kIsWeb || !Platform.isAndroid) return true;
     return await FlutterForegroundTask.requestIgnoreBatteryOptimization();
   }
 
   static Future<void> start(UserProfile profile) async {
-    if (!Platform.isAndroid) return;
+    if (kIsWeb || !Platform.isAndroid) return;
 
     init();
 
@@ -95,7 +95,7 @@ class BackgroundService {
   }
 
   static Future<void> stop() async {
-    if (!Platform.isAndroid) return;
+    if (kIsWeb || !Platform.isAndroid) return;
     await FlutterForegroundTask.stopService();
   }
 }

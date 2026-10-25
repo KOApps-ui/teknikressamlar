@@ -19,7 +19,7 @@ class FileLauncherService {
         return true;
       }
 
-      if (Platform.isLinux) {
+      if (!kIsWeb && Platform.isLinux) {
         final res = await Process.run('xdg-open', [filePath]);
         return res.exitCode == 0;
       }
@@ -27,7 +27,7 @@ class FileLauncherService {
       return false;
     } catch (e) {
       debugPrint('FileLauncherService error: $e');
-      if (Platform.isLinux) {
+      if (!kIsWeb && Platform.isLinux) {
         try {
           final res = await Process.run('xdg-open', [filePath]);
           return res.exitCode == 0;

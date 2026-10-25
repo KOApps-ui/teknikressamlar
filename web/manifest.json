@@ -1,11 +1,11 @@
 {
-    "name": "teknik_ressamlar",
-    "short_name": "teknik_ressamlar",
+    "name": "KO|Apps - Teknik Ressamlar & İşveren",
+    "short_name": "KO|Apps",
     "start_url": ".",
     "display": "standalone",
-    "background_color": "#0175C2",
-    "theme_color": "#0175C2",
-    "description": "A new Flutter project.",
+    "background_color": "#001220",
+    "theme_color": "#00e5ff",
+    "description": "Merkeziyetsiz P2P Teknik Ressam ve İşveren Çizim Platformu",
     "orientation": "portrait-primary",
     "prefer_related_applications": false,
     "icons": [

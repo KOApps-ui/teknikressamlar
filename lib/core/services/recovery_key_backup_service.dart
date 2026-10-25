@@ -59,6 +59,7 @@ class RecoveryKeyBackupService {
   /// Writes / overwrites the canonical snapshot for this profile and returns
   /// the stored backup.
   Future<AccountBackup?> backupProfile(UserProfile profile) async {
+    if (kIsWeb) return null;
     if (profile.publicKey.trim().isEmpty) return null;
     try {
       final offers = await _offersOf(profile);
@@ -100,6 +101,7 @@ class RecoveryKeyBackupService {
 
   /// Reads every snapshot stored on this device, newest first.
   Future<List<AccountBackup>> listBackups() async {
+    if (kIsWeb) return [];
     final result = <AccountBackup>[];
     try {
       final dir = await profileBackupDirectory();
@@ -123,6 +125,7 @@ class RecoveryKeyBackupService {
   }
 
   Future<AccountBackup?> loadBackupByPublicKey(String publicKey) async {
+    if (kIsWeb) return null;
     final clean = publicKey.trim().toLowerCase();
     if (clean.isEmpty) return null;
 
@@ -216,6 +219,7 @@ class RecoveryKeyBackupService {
     required String ownerName,
     required String role,
   }) async {
+    if (kIsWeb) return null;
     final key = privateKey.trim();
     if (key.isEmpty) return null;
 

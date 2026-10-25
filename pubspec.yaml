@@ -51,6 +51,7 @@ dependencies:
   syncfusion_flutter_pdf: ^34.2.8
   url_launcher: ^6.3.2
   flutter_foreground_task: ^11.0.3
+  web_socket_channel: ^3.0.3
 
 dev_dependencies:
   flutter_test:

@@ -5,6 +5,7 @@ import 'dart:typed_data';
 import 'package:flutter/foundation.dart';
 import 'package:nostr/nostr.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:web_socket_channel/web_socket_channel.dart';
 import '../models/user_profile.dart';
 import '../models/offer_model.dart';
 import 'local_db_service.dart';
@@ -61,6 +62,7 @@ class NostrService {
     'wss://nos.lol',
     'wss://relay.primal.net',
     'wss://nostr.mom',
+    'wss://relay.damus.io',
     'wss://offchain.pub',
   ];
 
@@ -81,7 +83,7 @@ class NostrService {
   static const int _lanUdpPort = 45454;
   static const int _lanTcpPort = 45455;
 
-  final Map<String, WebSocket> _activeRelays = {};
+  final Map<String, WebSocketChannel> _activeRelays = {};
   RawDatagramSocket? _udpSocket;
   ServerSocket? _tcpServer;
 
@@ -245,6 +247,7 @@ class NostrService {
   // ==========================================
 
   Future<void> _startLanEngine() async {
+    if (kIsWeb) return;
     try {
       _udpSocket?.close();
       try {
@@ -316,7 +319,7 @@ class NostrService {
   }
 
   Future<void> _sendLanBroadcast(String payload) async {
-    if (_udpSocket == null) return;
+    if (kIsWeb || _udpSocket == null) return;
     try {
       final bytes = utf8.encode(payload);
       try {
@@ -485,8 +488,8 @@ class NostrService {
     if (_activeRelays.containsKey(relayUrl)) return;
     try {
       debugPrint('Connecting to Nostr relay $relayUrl...');
-      final ws = await WebSocket.connect(relayUrl).timeout(const Duration(seconds: 12));
-      ws.pingInterval = const Duration(seconds: 15);
+      final ws = WebSocketChannel.connect(Uri.parse(relayUrl));
+      await ws.ready.timeout(const Duration(seconds: 10));
       _activeRelays[relayUrl] = ws;
       debugPrint('Connected to Nostr relay: $relayUrl');
 
@@ -510,11 +513,11 @@ class NostrService {
             ['role', _currentUser!.role],
           ],
         );
-        ws.add(json.encode(['EVENT', event.toMap()]));
+        ws.sink.add(json.encode(['EVENT', event.toMap()]));
         debugPrint('Immediately published draftsman profile to connected relay $relayUrl');
       }
 
-      ws.listen(
+      ws.stream.listen(
         (msg) => _handleRelayMessage(msg, relayUrl),
         onDone: () {
           debugPrint('Nostr relay disconnected: $relayUrl');
@@ -524,6 +527,7 @@ class NostrService {
         onError: (err) {
           debugPrint('Nostr relay error on $relayUrl: $err');
           _activeRelays.remove(relayUrl);
+          _safeAddConnectionStatus('Nostr (${_activeRelays.length} Röle)');
         },
       );
     } catch (e) {
@@ -531,12 +535,12 @@ class NostrService {
     }
   }
 
-  void _subscribeRelay(WebSocket ws, String relayUrl) {
+  void _subscribeRelay(WebSocketChannel ws, String relayUrl) {
     if (_keys == null) return;
 
     // 1. Subscribe to personal encrypted incoming events (Kind 21000 with tag #p = my public key)
     final subOffers = 'sub_offers_${_keys!.public.substring(0, 8)}';
-    ws.add(json.encode([
+    ws.sink.add(json.encode([
       'REQ',
       subOffers,
       {
@@ -549,7 +553,7 @@ class NostrService {
     if (_currentUser?.role != 'draftsman') {
       const subDiscovery = 'sub_discovery_company';
       final recentSince = DateTime.now().subtract(const Duration(minutes: 90)).millisecondsSinceEpoch ~/ 1000;
-      ws.add(json.encode([
+      ws.sink.add(json.encode([
         'REQ',
         subDiscovery,
         {
@@ -756,7 +760,7 @@ class NostrService {
         break;
       }
     }
-    if (targetFile != null && targetFile.filePath.isNotEmpty) {
+    if (!kIsWeb && targetFile != null && targetFile.filePath.isNotEmpty) {
       final fileObj = File(targetFile.filePath);
       if (await fileObj.exists()) {
         final bytes = await fileObj.readAsBytes();
@@ -793,7 +797,7 @@ class NostrService {
     final fileId = data['fileId'] as String?;
     final fileName = data['fileName'] as String? ?? 'drawing';
     final base64Str = data['base64'] as String?;
-    if (fileId != null && base64Str != null) {
+    if (!kIsWeb && fileId != null && base64Str != null) {
       try {
         final bytes = base64Decode(base64Str);
         final appDocDir = await getApplicationDocumentsDirectory();
@@ -816,14 +820,6 @@ class NostrService {
   }
 
   void _checkRelayHealth() {
-    for (final entry in _activeRelays.entries.toList()) {
-      if (entry.value.readyState != WebSocket.open) {
-        try {
-          entry.value.close();
-        } catch (_) {}
-        _activeRelays.remove(entry.key);
-      }
-    }
     for (final relayUrl in defaultRelays) {
       if (!_activeRelays.containsKey(relayUrl)) {
         _connectSingleRelay(relayUrl);
@@ -890,7 +886,7 @@ class NostrService {
 
     for (final ws in _activeRelays.values) {
       try {
-        ws.add(reqMsg);
+        ws.sink.add(reqMsg);
       } catch (e) {
         debugPrint('Error querying relay: $e');
       }
@@ -907,10 +903,10 @@ class NostrService {
       await _localDb.saveOffer(offer);
       if (_keys == null) return false;
 
-      // 1. If candidate is on LAN, try direct TCP transfer first
+      // 1. If candidate is on LAN, try direct TCP transfer first (native only)
       final candidateMeta = _discoveredDraftsmen[draftsmanPeerId] ?? _discoveredDraftsmen[draftsmanPublicKey];
       final lanIp = candidateMeta?['lanIp'] as String?;
-      if (lanIp != null) {
+      if (!kIsWeb && lanIp != null) {
         try {
           debugPrint('Attempting direct LAN TCP offer transfer to $lanIp:$_lanTcpPort...');
           final socket = await Socket.connect(lanIp, _lanTcpPort, timeout: const Duration(seconds: 2));
@@ -1065,7 +1061,7 @@ class NostrService {
     final pubKey = _cleanHex64(rawKey);
 
     // 2. Try fast LAN TCP first if IP is known
-    if (lanIp != null) {
+    if (!kIsWeb && lanIp != null) {
       try {
         debugPrint('Requesting portfolio file $fileId from LAN $lanIp:$_lanTcpPort...');
         final socket = await Socket.connect(lanIp, _lanTcpPort, timeout: const Duration(seconds: 3));
@@ -1160,16 +1156,14 @@ class NostrService {
 
   Future<Map<String, dynamic>?> fetchProfileMetadata(String pubKey) async {
     final clean = _cleanHex64(pubKey);
-    if (_activeRelays.isEmpty) {
-      await _connectToRelayPool();
-    }
-    for (final ws in _activeRelays.values) {
+    for (final relayUrl in defaultRelays) {
       try {
+        final channel = WebSocketChannel.connect(Uri.parse(relayUrl));
+        await channel.ready.timeout(const Duration(seconds: 4));
         final subId = 'sub_meta_${DateTime.now().millisecondsSinceEpoch % 10000}';
         final completer = Completer<Map<String, dynamic>?>();
 
-        late final StreamSubscription sub;
-        sub = ws.listen((rawMsg) {
+        final sub = channel.stream.listen((rawMsg) {
           try {
             final parsed = json.decode(rawMsg.toString()) as List;
             if (parsed.isNotEmpty && parsed[0] == 'EVENT') {
@@ -1184,7 +1178,7 @@ class NostrService {
           } catch (_) {}
         });
 
-        ws.add(json.encode([
+        channel.sink.add(json.encode([
           'REQ',
           subId,
           {
@@ -1194,8 +1188,9 @@ class NostrService {
           }
         ]));
 
-        final result = await completer.future.timeout(const Duration(seconds: 3), onTimeout: () => null);
+        final result = await completer.future.timeout(const Duration(seconds: 4), onTimeout: () => null);
         await sub.cancel();
+        await channel.sink.close();
         if (result != null) return result;
       } catch (_) {}
     }
@@ -1203,6 +1198,7 @@ class NostrService {
   }
 
   Future<String?> getDownloadedFilePath(String fileId, String fileName) async {
+    if (kIsWeb) return null;
     try {
       final appDocDir = await getApplicationDocumentsDirectory();
       final savePath = '${appDocDir.path}/p2p_downloads/${fileId}_$fileName';
@@ -1220,7 +1216,7 @@ class NostrService {
       _connectToRelayPool().then((_) {
         for (final ws in _activeRelays.values) {
           try {
-            ws.add(eventJson);
+            ws.sink.add(eventJson);
           } catch (e) {
             debugPrint('Error publishing to relay: $e');
           }
@@ -1230,7 +1226,7 @@ class NostrService {
     }
     for (final ws in _activeRelays.values) {
       try {
-        ws.add(eventJson);
+        ws.sink.add(eventJson);
       } catch (e) {
         debugPrint('Error publishing to relay: $e');
       }
@@ -1245,19 +1241,21 @@ class NostrService {
     _draftsmenDebounceTimer?.cancel();
     _draftsmenDebounceTimer = null;
 
-    try {
-      _udpSocket?.close();
-    } catch (_) {}
-    _udpSocket = null;
+    if (!kIsWeb) {
+      try {
+        _udpSocket?.close();
+      } catch (_) {}
+      _udpSocket = null;
 
-    try {
-      await _tcpServer?.close();
-    } catch (_) {}
-    _tcpServer = null;
+      try {
+        await _tcpServer?.close();
+      } catch (_) {}
+      _tcpServer = null;
+    }
 
     for (final ws in _activeRelays.values) {
       try {
-        await ws.close();
+        await ws.sink.close();
       } catch (_) {}
     }
     _activeRelays.clear();

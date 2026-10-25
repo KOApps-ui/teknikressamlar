@@ -1,8 +1,8 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:nostr/nostr.dart';
+import 'package:web_socket_channel/web_socket_channel.dart';
 import '../models/user_profile.dart';
 import 'local_db_service.dart';
 import 'notification_service.dart';
@@ -279,10 +279,11 @@ class SubscriptionService {
     final eventJson = json.encode(['EVENT', event.toMap()]);
     for (final r in _relays) {
       try {
-        final ws = await WebSocket.connect(r).timeout(const Duration(seconds: 3));
-        ws.add(eventJson);
+        final channel = WebSocketChannel.connect(Uri.parse(r));
+        await channel.ready.timeout(const Duration(seconds: 3));
+        channel.sink.add(eventJson);
         await Future.delayed(const Duration(milliseconds: 500));
-        await ws.close();
+        await channel.sink.close();
       } catch (_) {}
     }
     debugPrint('[SubscriptionService] Encrypted license backed up to Nostr relays.');
@@ -300,7 +301,8 @@ class SubscriptionService {
 
       for (final r in _relays) {
         try {
-          final ws = await WebSocket.connect(r).timeout(const Duration(seconds: 4));
+          final channel = WebSocketChannel.connect(Uri.parse(r));
+          await channel.ready.timeout(const Duration(seconds: 4));
           final subId = 'restore_${DateTime.now().millisecondsSinceEpoch}';
           final reqJson = json.encode([
             'REQ',
@@ -314,7 +316,7 @@ class SubscriptionService {
           ]);
 
           final completer = Completer<String?>();
-          final sub = ws.listen((message) async {
+          final sub = channel.stream.listen((message) async {
             try {
               final parsed = json.decode(message as String);
               if (parsed is List && parsed.isNotEmpty) {
@@ -331,10 +333,10 @@ class SubscriptionService {
             } catch (_) {}
           });
 
-          ws.add(reqJson);
+          channel.sink.add(reqJson);
           final cipherText = await completer.future.timeout(const Duration(seconds: 4), onTimeout: () => null);
           await sub.cancel();
-          await ws.close();
+          await channel.sink.close();
 
           if (cipherText != null && cipherText.isNotEmpty) {
             final decrypted = await Encryption.decrypt(

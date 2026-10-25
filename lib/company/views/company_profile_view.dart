@@ -13,12 +13,12 @@ import '../../core/services/edevlet_service.dart';
 import '../../core/services/file_launcher_service.dart';
 import '../../core/services/subscription_service.dart';
 import '../../core/theme/app_theme.dart';
-import '../../core/widgets/app_mode_selector_view.dart';
 import '../../core/widgets/blueprint_header.dart';
 import '../../core/widgets/subscription_modal.dart';
 import '../../core/widgets/battery_optimization_dialog.dart';
 import '../../core/services/recovery_key_backup_service.dart';
 import '../../core/services/background_service.dart';
+import '../../main.dart';
 
 class CompanyProfileView extends StatefulWidget {
   final VoidCallback? onProfileSaved;
@@ -544,19 +544,16 @@ class _CompanyProfileViewState extends State<CompanyProfileView> {
     );
 
     if (confirm == true && mounted) {
-      await BackgroundService.stop();
-      await _p2pService.dispose();
-      await _localDb.deleteUserProfile();
-      await _localDb.clearAllOffers();
+      try {
+        await BackgroundService.stop();
+        await _p2pService.dispose();
+        await _localDb.deleteUserProfile();
+        await _localDb.clearAllOffers();
+      } catch (e) {
+        debugPrint('Account deletion error: $e');
+      }
       if (mounted) {
-        Navigator.of(context, rootNavigator: true).pushAndRemoveUntil(
-          MaterialPageRoute(
-            builder: (_) => AppModeSelectorView(
-              onSelected: () {},
-            ),
-          ),
-          (route) => false,
-        );
+        TeknikRessamlarApp.resetToModeSelector(context);
       }
     }
   }

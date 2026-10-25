@@ -15,6 +15,8 @@ class P2PService {
   Stream<List<Map<String, dynamic>>> get discoveredDraftsmenStream => _nostr.discoveredDraftsmenStream;
   List<Map<String, dynamic>> get discoveredDraftsmen => _nostr.discoveredDraftsmen;
   List<Map<String, dynamic>> get discoveredCompanies => _nostr.discoveredCompanies;
+  List<Map<String, dynamic>> get auditLogs => _nostr.auditLogs;
+  Stream<List<Map<String, dynamic>>> get auditLogsStream => _nostr.auditLogsStream;
   Stream<OfferModel> get incomingOfferStream => _nostr.incomingOfferStream;
   Stream<Map<String, dynamic>> get offerResponseStream => _nostr.offerResponseStream;
   Stream<String> get connectionStatusStream => _nostr.connectionStatusStream;

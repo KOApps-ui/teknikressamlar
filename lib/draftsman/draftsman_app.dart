@@ -7,7 +7,7 @@ import '../core/services/background_service.dart';
 import '../core/theme/app_theme.dart';
 import '../core/widgets/quick_login_view.dart';
 import '../core/widgets/battery_optimization_dialog.dart';
-import '../core/widgets/app_mode_selector_view.dart';
+import '../main.dart';
 import 'views/draftsman_profile_view.dart';
 import 'views/draftsman_offers_view.dart';
 
@@ -208,20 +208,18 @@ class _DraftsmanAppState extends State<DraftsmanApp> with WidgetsBindingObserver
 
     if (confirm == true && mounted) {
       setState(() => _isLoading = true);
-      await BackgroundService.stop();
-      await _p2pService.dispose();
-      await _localDb.deleteUserProfile();
-      await _localDb.clearAllOffers();
+      try {
+        await BackgroundService.stop();
+        await _p2pService.dispose();
+        await _localDb.deleteUserProfile();
+        await _localDb.clearAllOffers();
+      } catch (e) {
+        debugPrint('Account deletion error: $e');
+      }
 
-      if (!mounted) return;
-      Navigator.of(context, rootNavigator: true).pushAndRemoveUntil(
-        MaterialPageRoute(
-          builder: (_) => AppModeSelectorView(
-            onSelected: () {},
-          ),
-        ),
-        (route) => false,
-      );
+      if (mounted) {
+        TeknikRessamlarApp.resetToModeSelector(context);
+      }
     }
   }
 

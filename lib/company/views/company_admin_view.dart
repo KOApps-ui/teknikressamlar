@@ -6,10 +6,12 @@ import '../../core/theme/app_theme.dart';
 import '../../core/widgets/blueprint_header.dart';
 
 /// Hidden Master Admin Console for KO|Apps Platform Owner.
-/// Allows invisible monitoring and moderation across Nostr relays:
-/// - View all discovered candidates & companies
-/// - Purge test, empty, or spam profiles with 1-click
-/// - Broadcast NIP-09 Kind 5 deletion tombstones to decentralized relays
+/// Features:
+/// - Protected by Master Admin PIN (Default: 1080 / koapps2026) to prevent unauthorized access
+/// - Invisible Monitoring & Network Health
+/// - Real-time Network Audit Logs (Who deleted their account, who registered, P2P telemetry)
+/// - 1-Click Junk/Test Account Cleaner
+/// - NIP-09 Kind 5 Moderation Broadcast
 class CompanyAdminView extends StatefulWidget {
   final UserProfile? companyProfile;
 
@@ -24,22 +26,71 @@ class _CompanyAdminViewState extends State<CompanyAdminView> with SingleTickerPr
   final _localDb = LocalDbService();
 
   late TabController _tabController;
+  final _pinController = TextEditingController();
+
+  bool _isVerified = false;
+  bool _isLoading = false;
+  String? _pinError;
+
   List<Map<String, dynamic>> _draftsmen = [];
   List<Map<String, dynamic>> _companies = [];
   List<String> _deletedCandidateIds = [];
-  bool _isLoading = false;
+  List<Map<String, dynamic>> _auditLogs = [];
+
+  static const List<String> _masterPins = ['1080', 'koapps2026', 'koapps2026!'];
 
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 3, vsync: this);
-    _loadAdminData();
+    _tabController = TabController(length: 4, vsync: this);
+    _checkVerification();
   }
 
   @override
   void dispose() {
     _tabController.dispose();
+    _pinController.dispose();
     super.dispose();
+  }
+
+  Future<void> _checkVerification() async {
+    final verified = await _localDb.isMasterAdminVerified();
+    if (mounted) {
+      setState(() => _isVerified = verified);
+      if (verified) {
+        _loadAdminData();
+      }
+    }
+  }
+
+  Future<void> _verifyPin() async {
+    final entered = _pinController.text.trim();
+    if (_masterPins.contains(entered)) {
+      await _localDb.setMasterAdminVerified(true);
+      if (mounted) {
+        setState(() {
+          _isVerified = true;
+          _pinError = null;
+        });
+        _pinController.clear();
+        await _loadAdminData();
+      }
+    } else {
+      setState(() {
+        _pinError = 'Geçersiz Master Güvenlik Anahtarı! Erişim reddedildi.';
+      });
+    }
+  }
+
+  Future<void> _lockAdmin() async {
+    await _localDb.setMasterAdminVerified(false);
+    if (mounted) {
+      setState(() {
+        _isVerified = false;
+        _pinController.clear();
+        _pinError = null;
+      });
+    }
   }
 
   Future<void> _loadAdminData() async {
@@ -47,12 +98,14 @@ class _CompanyAdminViewState extends State<CompanyAdminView> with SingleTickerPr
     final deleted = await _localDb.getDeletedCandidates();
     final draftsmen = _p2pService.discoveredDraftsmen;
     final companies = _p2pService.discoveredCompanies;
+    final logs = _p2pService.auditLogs;
 
     if (mounted) {
       setState(() {
         _deletedCandidateIds = deleted;
         _draftsmen = draftsmen;
         _companies = companies;
+        _auditLogs = logs;
         _isLoading = false;
       });
     }
@@ -67,7 +120,7 @@ class _CompanyAdminViewState extends State<CompanyAdminView> with SingleTickerPr
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           backgroundColor: AppTheme.statusSuccess,
-          content: Text('✓ Nostr röleleri yeniden tarandı ve güncellendi.'),
+          content: Text('✓ Nostr röleleri yeniden tarandı ve denetim günlüğü güncellendi.'),
         ),
       );
     }
@@ -237,6 +290,10 @@ class _CompanyAdminViewState extends State<CompanyAdminView> with SingleTickerPr
 
   @override
   Widget build(BuildContext context) {
+    if (!_isVerified) {
+      return _buildLockScreen();
+    }
+
     return Scaffold(
       backgroundColor: AppTheme.blueprintDark,
       body: SafeArea(
@@ -244,24 +301,35 @@ class _CompanyAdminViewState extends State<CompanyAdminView> with SingleTickerPr
           children: [
             BlueprintHeader(
               title: '👑 KO|APPS MASTER ADMİN',
-              trailing: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                decoration: BoxDecoration(
-                  color: AppTheme.statusDanger.withValues(alpha: 0.15),
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: AppTheme.statusDanger.withValues(alpha: 0.5)),
-                ),
-                child: const Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(Icons.shield, size: 14, color: AppTheme.statusDanger),
-                    SizedBox(width: 4),
-                    Text(
-                      'Admin',
-                      style: TextStyle(color: AppTheme.statusDanger, fontSize: 11, fontWeight: FontWeight.bold),
+              trailing: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                    decoration: BoxDecoration(
+                      color: AppTheme.statusSuccess.withValues(alpha: 0.15),
+                      borderRadius: BorderRadius.circular(6),
+                      border: Border.all(color: AppTheme.statusSuccess.withValues(alpha: 0.4)),
                     ),
-                  ],
-                ),
+                    child: const Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.lock_open, size: 12, color: AppTheme.statusSuccess),
+                        SizedBox(width: 4),
+                        Text(
+                          'Yetkili',
+                          style: TextStyle(color: AppTheme.statusSuccess, fontSize: 10, fontWeight: FontWeight.bold),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 6),
+                  IconButton(
+                    icon: const Icon(Icons.lock_outline, size: 18, color: AppTheme.textSubtle),
+                    tooltip: 'Admin Oturumunu Kapat',
+                    onPressed: _lockAdmin,
+                  ),
+                ],
               ),
             ),
 
@@ -285,6 +353,15 @@ class _CompanyAdminViewState extends State<CompanyAdminView> with SingleTickerPr
                       value: '${_companies.length}',
                       icon: Icons.business,
                       color: AppTheme.amberSteel,
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: _buildStatCard(
+                      label: 'Olay Günlüğü',
+                      value: '${_auditLogs.length}',
+                      icon: Icons.history,
+                      color: AppTheme.textLight,
                     ),
                   ),
                   const SizedBox(width: 8),
@@ -320,7 +397,7 @@ class _CompanyAdminViewState extends State<CompanyAdminView> with SingleTickerPr
                   const SizedBox(width: 8),
                   IconButton(
                     icon: const Icon(Icons.refresh, color: AppTheme.cyanLine),
-                    tooltip: 'Ağı Tara',
+                    tooltip: 'Ağı ve Günlüğü Yenile',
                     onPressed: _refreshFromRelays,
                   ),
                 ],
@@ -340,9 +417,11 @@ class _CompanyAdminViewState extends State<CompanyAdminView> with SingleTickerPr
                 indicatorColor: AppTheme.cyanLine,
                 labelColor: AppTheme.cyanLine,
                 unselectedLabelColor: AppTheme.textMuted,
+                isScrollable: true,
                 tabs: [
                   Tab(text: 'Ressamlar (${_draftsmen.length})'),
                   Tab(text: 'Şirketler (${_companies.length})'),
+                  Tab(text: '🔍 Olay Günlüğü (${_auditLogs.length})'),
                   Tab(text: 'Engellenenler (${_deletedCandidateIds.length})'),
                 ],
               ),
@@ -357,11 +436,109 @@ class _CompanyAdminViewState extends State<CompanyAdminView> with SingleTickerPr
                       children: [
                         _buildDraftsmenList(),
                         _buildCompaniesList(),
+                        _buildAuditLogsList(),
                         _buildDeletedList(),
                       ],
                     ),
             ),
           ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildLockScreen() {
+    return Scaffold(
+      backgroundColor: AppTheme.blueprintDark,
+      body: SafeArea(
+        child: Center(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.all(24),
+            child: Container(
+              constraints: const BoxConstraints(maxWidth: 420),
+              padding: const EdgeInsets.all(24),
+              decoration: BoxDecoration(
+                color: AppTheme.blueprintSurface,
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: AppTheme.amberSteel.withValues(alpha: 0.6), width: 1.5),
+                boxShadow: [
+                  BoxShadow(
+                    color: AppTheme.amberSteel.withValues(alpha: 0.1),
+                    blurRadius: 20,
+                    spreadRadius: 2,
+                  ),
+                ],
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      color: AppTheme.amberSteel.withValues(alpha: 0.15),
+                      shape: BoxShape.circle,
+                    ),
+                    child: const Icon(Icons.admin_panel_settings, color: AppTheme.amberSteel, size: 40),
+                  ),
+                  const SizedBox(height: 16),
+                  const Text(
+                    '👑 KO|APPS MASTER ADMİN',
+                    style: TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold,
+                      color: AppTheme.textLight,
+                      letterSpacing: 0.5,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  const Text(
+                    'Bu konsol merkeziyetsiz ağ teftişi, silinen hesapların denetimi ve moderasyon için yetkilendirme gerektirir.',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(color: AppTheme.textMuted, fontSize: 13, height: 1.4),
+                  ),
+                  const SizedBox(height: 24),
+                  TextField(
+                    controller: _pinController,
+                    obscureText: true,
+                    autofocus: true,
+                    style: const TextStyle(color: AppTheme.textLight, letterSpacing: 3),
+                    decoration: InputDecoration(
+                      labelText: 'Master Güvenlik PIN',
+                      labelStyle: const TextStyle(color: AppTheme.amberSteel),
+                      hintText: 'PIN Girin (Örn: 1080)',
+                      hintStyle: const TextStyle(color: AppTheme.textSubtle, letterSpacing: 1),
+                      prefixIcon: const Icon(Icons.key, color: AppTheme.amberSteel, size: 20),
+                      errorText: _pinError,
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        borderSide: const BorderSide(color: AppTheme.steelBorder),
+                      ),
+                      focusedBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        borderSide: const BorderSide(color: AppTheme.amberSteel, width: 1.5),
+                      ),
+                    ),
+                    onSubmitted: (_) => _verifyPin(),
+                  ),
+                  const SizedBox(height: 20),
+                  SizedBox(
+                    width: double.infinity,
+                    height: 48,
+                    child: ElevatedButton.icon(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: AppTheme.amberSteel,
+                        foregroundColor: AppTheme.blueprintDark,
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                      ),
+                      icon: const Icon(Icons.lock_open, size: 18),
+                      label: const Text('Admin Girişi Yap', style: TextStyle(fontWeight: FontWeight.bold)),
+                      onPressed: _verifyPin,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
         ),
       ),
     );
@@ -391,6 +568,8 @@ class _CompanyAdminViewState extends State<CompanyAdminView> with SingleTickerPr
           Text(
             label,
             style: const TextStyle(color: AppTheme.textMuted, fontSize: 11),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
           ),
         ],
       ),
@@ -508,6 +687,150 @@ class _CompanyAdminViewState extends State<CompanyAdminView> with SingleTickerPr
               tooltip: 'Ağdan Sil & Engelle',
               onPressed: () => _deleteTarget(c, isCompany: true),
             ),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildAuditLogsList() {
+    if (_auditLogs.isEmpty) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(Icons.insights, size: 40, color: AppTheme.cyanLine),
+              const SizedBox(height: 12),
+              const Text(
+                'Ağ Denetim & Teftiş Kayıtları',
+                style: TextStyle(fontWeight: FontWeight.bold, color: AppTheme.textLight, fontSize: 15),
+              ),
+              const SizedBox(height: 6),
+              const Text(
+                'Röleler dinleniyor. Kullanıcıların hesap silme sinyalleri (Kind 5) veya yeni profil kayıtları (Kind 0) burada anlık listelenir.',
+                textAlign: TextAlign.center,
+                style: TextStyle(color: AppTheme.textMuted, fontSize: 12),
+              ),
+              const SizedBox(height: 14),
+              ElevatedButton.icon(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppTheme.cyanLine,
+                  foregroundColor: AppTheme.blueprintDark,
+                ),
+                icon: const Icon(Icons.refresh, size: 16),
+                label: const Text('Röleleri Şimdi Tara'),
+                onPressed: _refreshFromRelays,
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    return ListView.builder(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      itemCount: _auditLogs.length,
+      itemBuilder: (context, index) {
+        final log = _auditLogs[index];
+        final type = log['type'] as String? ?? 'EVENT';
+        final eventTitle = log['event'] as String? ?? 'Olay';
+        final timestamp = log['timestamp'] as DateTime? ?? DateTime.now();
+        final timeStr =
+            '${timestamp.hour.toString().padLeft(2, '0')}:${timestamp.minute.toString().padLeft(2, '0')}:${timestamp.second.toString().padLeft(2, '0')}';
+
+        Color logColor;
+        IconData logIcon;
+
+        if (type == 'DELETION') {
+          logColor = AppTheme.statusDanger;
+          logIcon = Icons.delete_forever;
+        } else if (type == 'PROFILE') {
+          logColor = log['role'] == 'company' ? AppTheme.amberSteel : AppTheme.cyanLine;
+          logIcon = log['role'] == 'company' ? Icons.business : Icons.person_add;
+        } else {
+          logColor = AppTheme.textMuted;
+          logIcon = Icons.swap_horiz;
+        }
+
+        return Container(
+          margin: const EdgeInsets.only(bottom: 8),
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: AppTheme.blueprintCard,
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(color: logColor.withValues(alpha: 0.3)),
+          ),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: logColor.withValues(alpha: 0.15),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Icon(logIcon, color: logColor, size: 20),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Text(
+                          eventTitle,
+                          style: TextStyle(color: logColor, fontWeight: FontWeight.bold, fontSize: 13),
+                        ),
+                        Text(
+                          timeStr,
+                          style: const TextStyle(color: AppTheme.textSubtle, fontSize: 11, fontFamily: 'monospace'),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 4),
+                    if (type == 'DELETION') ...[
+                      Text(
+                        'Silinme Nedeni: ${log['reason']}',
+                        style: const TextStyle(color: AppTheme.textLight, fontSize: 12),
+                      ),
+                      Text(
+                        log['isSelfDelete'] == true ? '✓ Kullanıcı kendi rızasıyla cihazından sildi' : '⚠️ Moderatör tarafından silindi',
+                        style: TextStyle(
+                          color: log['isSelfDelete'] == true ? AppTheme.statusSuccess : AppTheme.statusDanger,
+                          fontSize: 11,
+                        ),
+                      ),
+                      Text(
+                        'İmzalayan: did:nostr:${(log['pubkey'] as String).length > 16 ? '${(log['pubkey'] as String).substring(0, 16)}...' : log['pubkey']}',
+                        style: const TextStyle(color: AppTheme.textSubtle, fontSize: 10, fontFamily: 'monospace'),
+                      ),
+                    ] else if (type == 'PROFILE') ...[
+                      Text(
+                        '${log['name']} • ${log['branch']} (${log['city']})',
+                        style: const TextStyle(color: AppTheme.textLight, fontSize: 12),
+                      ),
+                      Text(
+                        'DID: did:nostr:${(log['pubkey'] as String).length > 16 ? '${(log['pubkey'] as String).substring(0, 16)}...' : log['pubkey']}',
+                        style: const TextStyle(color: AppTheme.textSubtle, fontSize: 10, fontFamily: 'monospace'),
+                      ),
+                    ] else ...[
+                      Text(
+                        'Paket: ${log['note']}',
+                        style: const TextStyle(color: AppTheme.textLight, fontSize: 12),
+                      ),
+                      Text(
+                        'Düğüm: did:nostr:${log['pubkey']}',
+                        style: const TextStyle(color: AppTheme.textSubtle, fontSize: 10, fontFamily: 'monospace'),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ],
           ),
         );
       },

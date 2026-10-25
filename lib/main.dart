@@ -32,11 +32,27 @@ void main() async {
 class TeknikRessamlarApp extends StatefulWidget {
   const TeknikRessamlarApp({super.key});
 
+  static TeknikRessamlarAppState? of(BuildContext context) =>
+      context.findAncestorStateOfType<TeknikRessamlarAppState>();
+
+  static void resetToModeSelector(BuildContext context) {
+    final state = of(context);
+    state?.resetUser();
+    Navigator.of(context, rootNavigator: true).pushAndRemoveUntil(
+      MaterialPageRoute(
+        builder: (_) => AppModeSelectorView(
+          onSelected: () => state?.reloadUser(),
+        ),
+      ),
+      (route) => false,
+    );
+  }
+
   @override
-  State<TeknikRessamlarApp> createState() => _TeknikRessamlarAppState();
+  State<TeknikRessamlarApp> createState() => TeknikRessamlarAppState();
 }
 
-class _TeknikRessamlarAppState extends State<TeknikRessamlarApp> {
+class TeknikRessamlarAppState extends State<TeknikRessamlarApp> {
   final _localDb = LocalDbService();
   UserProfile? _profile;
   bool _isLoading = true;
@@ -45,6 +61,20 @@ class _TeknikRessamlarAppState extends State<TeknikRessamlarApp> {
   void initState() {
     super.initState();
     _loadUser();
+  }
+
+  void resetUser() {
+    if (mounted) {
+      setState(() {
+        _profile = null;
+        _isLoading = false;
+      });
+    }
+  }
+
+  Future<void> reloadUser() async {
+    setState(() => _isLoading = true);
+    await _loadUser();
   }
 
   Future<void> _loadUser() async {

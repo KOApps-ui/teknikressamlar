@@ -80,9 +80,17 @@ class LocalDbService {
   Future<void> deleteUserProfile() async {
     await _ensureInit();
     await _userBox?.clear();
-    await _userBox?.flush();
     await _settingsBox?.delete('active_role');
-    await _settingsBox?.flush();
+  }
+
+  Future<bool> isMasterAdminVerified() async {
+    await _ensureInit();
+    return (_settingsBox?.get('master_admin_verified') as bool?) ?? false;
+  }
+
+  Future<void> setMasterAdminVerified(bool verified) async {
+    await _ensureInit();
+    await _settingsBox?.put('master_admin_verified', verified);
   }
 
   Future<void> addPortfolioFile(PortfolioFile file) async {

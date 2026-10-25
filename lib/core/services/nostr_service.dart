@@ -107,9 +107,15 @@ class NostrService {
   StreamController<String> _connectionStatusController =
       StreamController<String>.broadcast();
 
+  final List<Map<String, dynamic>> _networkAuditLogs = [];
+  StreamController<List<Map<String, dynamic>>> _auditLogsController =
+      StreamController<List<Map<String, dynamic>>>.broadcast();
+
   Stream<List<Map<String, dynamic>>> get discoveredDraftsmenStream => _draftsmenController.stream;
   List<Map<String, dynamic>> get discoveredDraftsmen => _discoveredDraftsmen.values.toList();
   List<Map<String, dynamic>> get discoveredCompanies => _discoveredCompanies.values.toList();
+  Stream<List<Map<String, dynamic>>> get auditLogsStream => _auditLogsController.stream;
+  List<Map<String, dynamic>> get auditLogs => List.unmodifiable(_networkAuditLogs);
   Stream<OfferModel> get incomingOfferStream => _incomingOfferController.stream;
   Stream<Map<String, dynamic>> get offerResponseStream => _offerResponseController.stream;
   Stream<String> get connectionStatusStream => _connectionStatusController.stream;
@@ -140,6 +146,17 @@ class NostrService {
       _offerResponseController = StreamController<Map<String, dynamic>>.broadcast();
     }
     _offerResponseController.add(response);
+  }
+
+  void _addAuditLog(Map<String, dynamic> log) {
+    _networkAuditLogs.insert(0, log);
+    if (_networkAuditLogs.length > 250) {
+      _networkAuditLogs.removeLast();
+    }
+    if (_auditLogsController.isClosed) {
+      _auditLogsController = StreamController<List<Map<String, dynamic>>>.broadcast();
+    }
+    _auditLogsController.add(List.unmodifiable(_networkAuditLogs));
   }
 
   bool get isConnected => _activeRelays.isNotEmpty;
@@ -608,6 +625,9 @@ class NostrService {
     final kind = event['kind'] as int?;
     final senderPubkey = event['pubkey'] as String?;
     final content = event['content'] as String? ?? '';
+    final createdAt = event['created_at'] != null
+        ? DateTime.fromMillisecondsSinceEpoch((event['created_at'] as int) * 1000)
+        : DateTime.now();
 
     if (kind == 0) {
       // Profile Metadata Event
@@ -616,6 +636,17 @@ class NostrService {
         final role = profileData['role'] as String?;
         profileData['id'] = senderPubkey ?? profileData['id'];
         profileData['publicKey'] = senderPubkey ?? profileData['publicKey'];
+
+        _addAuditLog({
+          'type': 'PROFILE',
+          'event': role == 'company' ? 'Şirket Profili' : 'Teknik Ressam Profili',
+          'name': profileData['name'] ?? 'İsimsiz',
+          'branch': profileData['branch'] ?? '',
+          'city': profileData['city'] ?? '',
+          'pubkey': senderPubkey ?? '',
+          'role': role ?? 'draftsman',
+          'timestamp': createdAt,
+        });
 
         if (role == 'company') {
           final pk = profileData['publicKey'] as String? ?? '';
@@ -630,14 +661,32 @@ class NostrService {
       // Moderation Deletion Event (NIP-09)
       try {
         final tags = event['tags'] as List? ?? [];
+        String targetPubkey = '';
         for (final t in tags) {
           if (t is List && t.length >= 2 && t[0] == 'p') {
-            final targetPubkey = t[1] as String;
+            targetPubkey = t[1] as String;
             deleteCandidate(targetPubkey);
           }
         }
+        _addAuditLog({
+          'type': 'DELETION',
+          'event': 'Hesap Silme Talebi (Kind 5)',
+          'pubkey': senderPubkey ?? '',
+          'target': targetPubkey.isNotEmpty ? targetPubkey : (senderPubkey ?? ''),
+          'reason': content.isNotEmpty ? content : 'Kullanıcı bizzat sildi',
+          'isSelfDelete': targetPubkey.isEmpty || targetPubkey == senderPubkey,
+          'timestamp': createdAt,
+        });
       } catch (_) {}
     } else if (kind == 21000) {
+      _addAuditLog({
+        'type': 'TRAFFIC',
+        'event': 'Şifreli P2P Paket (Kind 21000)',
+        'pubkey': senderPubkey != null && senderPubkey.length > 12 ? '${senderPubkey.substring(0, 10)}...' : 'P2P',
+        'note': 'Uçtan uca şifreli veri (Mahremiyet korumalı)',
+        'timestamp': createdAt,
+      });
+
       // Encrypted Direct Application Event (Offers / Responses / File Chunks)
       if (_keys == null || senderPubkey == null) return;
 

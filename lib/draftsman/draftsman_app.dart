@@ -8,6 +8,7 @@ import '../core/theme/app_theme.dart';
 import '../core/widgets/quick_login_view.dart';
 import '../core/widgets/account_removal_dialog.dart';
 import '../core/widgets/battery_optimization_dialog.dart';
+import '../core/widgets/app_mode_selector_view.dart';
 import '../core/services/recovery_key_backup_service.dart';
 import 'views/draftsman_profile_view.dart';
 import 'views/draftsman_offers_view.dart';
@@ -98,6 +99,7 @@ class _DraftsmanAppState extends State<DraftsmanApp> with WidgetsBindingObserver
   }
 
   Future<void> _checkUserProfile() async {
+    _profileViewEpoch++;
     try {
       final profile = await _localDb.getUserProfile();
       final loggedIn = await _localDb.isUserLoggedIn();
@@ -180,15 +182,14 @@ class _DraftsmanAppState extends State<DraftsmanApp> with WidgetsBindingObserver
     await _localDb.clearAllOffers();
 
     if (!mounted) return;
-    setState(() {
-      _userProfile = null;
-      _isLoggedIn = false;
-      _isEditingProfile = true;
-      _currentIndex = 0;
-      _pendingOffersCount = 0;
-      _profileViewEpoch++;
-      _isLoading = false;
-    });
+    Navigator.of(context, rootNavigator: true).pushAndRemoveUntil(
+      MaterialPageRoute(
+        builder: (_) => AppModeSelectorView(
+          onSelected: () {},
+        ),
+      ),
+      (route) => false,
+    );
   }
 
   /// Returns true when the removal was cancelled or the account was restored.

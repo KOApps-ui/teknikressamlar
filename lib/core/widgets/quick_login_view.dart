@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import '../models/user_profile.dart';
 import '../theme/app_theme.dart';
@@ -29,7 +30,7 @@ class QuickLoginView extends StatelessWidget {
     final accentColor = isCompany ? AppTheme.amberSteel : AppTheme.cyanLine;
 
     ImageProvider? imageProvider;
-    if (profile.avatarPath != null && File(profile.avatarPath!).existsSync()) {
+    if (!kIsWeb && profile.avatarPath != null && File(profile.avatarPath!).existsSync()) {
       imageProvider = FileImage(File(profile.avatarPath!));
     } else if (profile.avatarBase64 != null && profile.avatarBase64!.isNotEmpty) {
       try {

@@ -8,6 +8,7 @@ import '../core/theme/app_theme.dart';
 import '../core/widgets/quick_login_view.dart';
 import '../core/widgets/account_removal_dialog.dart';
 import '../core/widgets/battery_optimization_dialog.dart';
+import '../core/widgets/app_mode_selector_view.dart';
 import '../core/services/recovery_key_backup_service.dart';
 import 'views/company_search_view.dart';
 import 'views/company_sent_offers_view.dart';
@@ -52,6 +53,7 @@ class _CompanyAppState extends State<CompanyApp> with WidgetsBindingObserver {
   }
 
   Future<void> _checkCompanyProfile() async {
+    _profileViewEpoch++;
     try {
       final profile = await _localDb.getUserProfile();
       final loggedIn = await _localDb.isUserLoggedIn();
@@ -134,8 +136,16 @@ class _CompanyAppState extends State<CompanyApp> with WidgetsBindingObserver {
     await _p2pService.dispose();
     await _localDb.deleteUserProfile();
     await _localDb.clearAllOffers();
-    _profileViewEpoch++;
-    await _checkCompanyProfile();
+    if (mounted) {
+      Navigator.of(context, rootNavigator: true).pushAndRemoveUntil(
+        MaterialPageRoute(
+          builder: (_) => AppModeSelectorView(
+            onSelected: () {},
+          ),
+        ),
+        (route) => false,
+      );
+    }
   }
 
   /// Returns true when the removal was cancelled or the account was restored.

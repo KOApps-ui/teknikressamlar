@@ -17,6 +17,7 @@ import '../../core/theme/app_theme.dart';
 import '../../core/widgets/blueprint_header.dart';
 import '../../core/widgets/account_removal_dialog.dart';
 import '../../core/widgets/battery_optimization_dialog.dart';
+import '../../core/widgets/app_mode_selector_view.dart';
 import '../../core/services/recovery_key_backup_service.dart';
 import '../../core/services/background_service.dart';
 
@@ -1303,10 +1304,20 @@ class _DraftsmanProfileViewState extends State<DraftsmanProfileView> {
       return;
     }
     if (res.decision == RemovalDecision.confirmDelete && mounted) {
+      await BackgroundService.stop();
       await _p2pService.dispose();
       await _localDb.deleteUserProfile();
       await _localDb.clearAllOffers();
-      widget.onProfileSaved?.call();
+      if (mounted) {
+        Navigator.of(context, rootNavigator: true).pushAndRemoveUntil(
+          MaterialPageRoute(
+            builder: (_) => AppModeSelectorView(
+              onSelected: () {},
+            ),
+          ),
+          (route) => false,
+        );
+      }
     }
   }
 

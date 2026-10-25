@@ -19,6 +19,7 @@ import '../../core/widgets/subscription_modal.dart';
 import '../../core/widgets/account_removal_dialog.dart';
 import '../../core/widgets/battery_optimization_dialog.dart';
 import '../../core/widgets/app_update_dialog.dart';
+import '../../core/widgets/pwa_install_card.dart';
 import '../../core/constants/app_version.dart';
 import '../../core/services/recovery_key_backup_service.dart';
 import '../../core/services/background_service.dart';
@@ -1794,6 +1795,7 @@ class _CompanyProfileViewState extends State<CompanyProfileView> {
                   ],
                 ),
               ),
+              const PWAInstallCard(compact: true),
               const SizedBox(height: 6),
 
               // Alt aksiyonlar (Çıkış Yap & Hesabı Sil)

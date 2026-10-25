@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../theme/app_theme.dart';
 import 'blueprint_header.dart';
+import 'pwa_install_card.dart';
 import '../../draftsman/draftsman_app.dart';
 import '../../company/company_app.dart';
 
@@ -35,7 +36,8 @@ class AppModeSelectorView extends StatelessWidget {
                 textAlign: TextAlign.center,
                 style: TextStyle(color: AppTheme.textMuted, fontSize: 13),
               ),
-              const SizedBox(height: 32),
+              const SizedBox(height: 24),
+              const PWAInstallCard(),
 
               // Draftsman Mode Card
               _buildRoleCard(

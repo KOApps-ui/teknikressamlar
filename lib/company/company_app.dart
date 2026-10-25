@@ -6,13 +6,12 @@ import '../core/services/p2p_service.dart';
 import '../core/services/background_service.dart';
 import '../core/theme/app_theme.dart';
 import '../core/widgets/quick_login_view.dart';
-import '../core/widgets/account_removal_dialog.dart';
 import '../core/widgets/battery_optimization_dialog.dart';
 import '../core/widgets/app_mode_selector_view.dart';
-import '../core/services/recovery_key_backup_service.dart';
 import 'views/company_search_view.dart';
 import 'views/company_sent_offers_view.dart';
 import 'views/company_profile_view.dart';
+import 'views/company_admin_view.dart';
 
 class CompanyApp extends StatefulWidget {
   const CompanyApp({super.key});
@@ -119,43 +118,68 @@ class _CompanyAppState extends State<CompanyApp> with WidgetsBindingObserver {
   }
 
   Future<void> _deleteCurrentAccount() async {
-    final res = await AccountRemovalDialog.confirm(
+    final confirm = await showDialog<bool>(
       context: context,
-      title: 'Şirket Hesabını Kalıcı Olarak Sil',
-      message:
-          'Şirket profiliniz, kimlik anahtarlarınız ve bu cihazdaki tüm teklifleriniz kalıcı olarak silinecektir.',
-      profile: _companyProfile,
-      confirmLabel: 'KALICI OLARAK SİL',
-    );
-    final handled = await _handleRemovalResult(res);
-    if (handled) return;
-    if (!mounted) return;
-
-    setState(() => _isLoading = true);
-    await BackgroundService.stop();
-    await _p2pService.dispose();
-    await _localDb.deleteUserProfile();
-    await _localDb.clearAllOffers();
-    if (mounted) {
-      Navigator.of(context, rootNavigator: true).pushAndRemoveUntil(
-        MaterialPageRoute(
-          builder: (_) => AppModeSelectorView(
-            onSelected: () {},
-          ),
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppTheme.blueprintDark,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+          side: const BorderSide(color: AppTheme.statusDanger, width: 1.5),
         ),
-        (route) => false,
-      );
-    }
-  }
+        title: const Row(
+          children: [
+            Icon(Icons.warning_amber_rounded, color: AppTheme.statusDanger, size: 24),
+            SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                'Şirket Hesabını Kalıcı Olarak Sil',
+                style: TextStyle(
+                  color: AppTheme.textLight,
+                  fontSize: 16,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ),
+          ],
+        ),
+        content: const Text(
+          'Şirket profiliniz, kimlik anahtarlarınız ve bu cihazdaki tüm teklifleriniz kalıcı olarak silinecektir.\n\nEmin misiniz?',
+          style: TextStyle(color: AppTheme.textMuted, fontSize: 13, height: 1.5),
+        ),
+        actions: [
+          TextButton(
+            child: const Text('İptal', style: TextStyle(color: AppTheme.textMuted)),
+            onPressed: () => Navigator.of(ctx).pop(false),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppTheme.statusDanger,
+              foregroundColor: Colors.white,
+            ),
+            child: const Text('Kalıcı Olarak Sil', style: TextStyle(fontWeight: FontWeight.bold)),
+            onPressed: () => Navigator.of(ctx).pop(true),
+          ),
+        ],
+      ),
+    );
 
-  /// Returns true when the removal was cancelled or the account was restored.
-  Future<bool> _handleRemovalResult(RemovalResult res) async {
-    if (res.decision == RemovalDecision.restoreBackup && res.backup != null) {
-      await RecoveryKeyBackupService().restoreToLocal(res.backup!);
-      await _checkCompanyProfile();
-      return true;
+    if (confirm == true && mounted) {
+      setState(() => _isLoading = true);
+      await BackgroundService.stop();
+      await _p2pService.dispose();
+      await _localDb.deleteUserProfile();
+      await _localDb.clearAllOffers();
+      if (mounted) {
+        Navigator.of(context, rootNavigator: true).pushAndRemoveUntil(
+          MaterialPageRoute(
+            builder: (_) => AppModeSelectorView(
+              onSelected: () {},
+            ),
+          ),
+          (route) => false,
+        );
+      }
     }
-    return res.decision != RemovalDecision.confirmDelete;
   }
 
   @override
@@ -194,6 +218,10 @@ class _CompanyAppState extends State<CompanyApp> with WidgetsBindingObserver {
       );
     }
 
+    final bool isAdmin = _companyProfile != null &&
+        (_companyProfile!.name.trim().toLowerCase().contains('ko|apps') ||
+            _companyProfile!.name.trim().toLowerCase().contains('ko apps'));
+
     final List<Widget> pages = [
       const CompanySearchView(),
       const CompanySentOffersView(),
@@ -201,11 +229,15 @@ class _CompanyAppState extends State<CompanyApp> with WidgetsBindingObserver {
         key: ValueKey('company_profile_$_profileViewEpoch'),
         onProfileSaved: () => _checkCompanyProfile(),
       ),
+      if (isAdmin)
+        CompanyAdminView(companyProfile: _companyProfile),
     ];
+
+    final effectiveIndex = _currentIndex < pages.length ? _currentIndex : 0;
 
     return Scaffold(
       body: IndexedStack(
-        index: _currentIndex,
+        index: effectiveIndex,
         children: pages,
       ),
       bottomNavigationBar: Container(
@@ -213,24 +245,30 @@ class _CompanyAppState extends State<CompanyApp> with WidgetsBindingObserver {
           border: Border(top: BorderSide(color: AppTheme.steelBorder, width: 1)),
         ),
         child: BottomNavigationBar(
-          currentIndex: _currentIndex,
+          currentIndex: effectiveIndex,
           onTap: (index) => setState(() => _currentIndex = index),
-          items: const [
-            BottomNavigationBarItem(
+          items: [
+            const BottomNavigationBarItem(
               icon: Icon(Icons.search),
               activeIcon: Icon(Icons.saved_search),
               label: 'Aday Keşfet',
             ),
-            BottomNavigationBarItem(
+            const BottomNavigationBarItem(
               icon: Icon(Icons.outbox_outlined),
               activeIcon: Icon(Icons.outbox),
               label: 'Teklifler',
             ),
-            BottomNavigationBarItem(
+            const BottomNavigationBarItem(
               icon: Icon(Icons.business_outlined),
               activeIcon: Icon(Icons.business),
               label: 'Şirket Profili',
             ),
+            if (isAdmin)
+              const BottomNavigationBarItem(
+                icon: Icon(Icons.admin_panel_settings_outlined),
+                activeIcon: Icon(Icons.admin_panel_settings),
+                label: '👑 Admin',
+              ),
           ],
         ),
       ),

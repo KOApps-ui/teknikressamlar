@@ -1,0 +1,552 @@
+import 'package:flutter/material.dart';
+import '../../core/models/user_profile.dart';
+import '../../core/services/local_db_service.dart';
+import '../../core/services/nostr_service.dart';
+import '../../core/theme/app_theme.dart';
+import '../../core/widgets/blueprint_header.dart';
+
+/// Hidden Master Admin Console for KO|Apps Platform Owner.
+/// Allows invisible monitoring and moderation across Nostr relays:
+/// - View all discovered candidates & companies
+/// - Purge test, empty, or spam profiles with 1-click
+/// - Broadcast NIP-09 Kind 5 deletion tombstones to decentralized relays
+class CompanyAdminView extends StatefulWidget {
+  final UserProfile? companyProfile;
+
+  const CompanyAdminView({super.key, this.companyProfile});
+
+  @override
+  State<CompanyAdminView> createState() => _CompanyAdminViewState();
+}
+
+class _CompanyAdminViewState extends State<CompanyAdminView> with SingleTickerProviderStateMixin {
+  final _p2pService = NostrService();
+  final _localDb = LocalDbService();
+
+  late TabController _tabController;
+  List<Map<String, dynamic>> _draftsmen = [];
+  List<Map<String, dynamic>> _companies = [];
+  List<String> _deletedCandidateIds = [];
+  bool _isLoading = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _tabController = TabController(length: 3, vsync: this);
+    _loadAdminData();
+  }
+
+  @override
+  void dispose() {
+    _tabController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _loadAdminData() async {
+    setState(() => _isLoading = true);
+    final deleted = await _localDb.getDeletedCandidates();
+    final draftsmen = _p2pService.discoveredDraftsmen;
+    final companies = _p2pService.discoveredCompanies;
+
+    if (mounted) {
+      setState(() {
+        _deletedCandidateIds = deleted;
+        _draftsmen = draftsmen;
+        _companies = companies;
+        _isLoading = false;
+      });
+    }
+  }
+
+  Future<void> _refreshFromRelays() async {
+    setState(() => _isLoading = true);
+    await _p2pService.queryDraftsmen();
+    await Future.delayed(const Duration(milliseconds: 800));
+    await _loadAdminData();
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          backgroundColor: AppTheme.statusSuccess,
+          content: Text('✓ Nostr röleleri yeniden tarandı ve güncellendi.'),
+        ),
+      );
+    }
+  }
+
+  Future<void> _deleteTarget(Map<String, dynamic> target, {required bool isCompany}) async {
+    final name = target['name'] as String? ?? 'İsimsiz';
+    final peerId = target['id'] as String? ?? target['publicKey'] as String? ?? '';
+
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppTheme.blueprintDark,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+          side: const BorderSide(color: AppTheme.statusDanger, width: 1.5),
+        ),
+        title: Row(
+          children: [
+            const Icon(Icons.security, color: AppTheme.statusDanger),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                'Ağdan Sil: $name',
+                style: const TextStyle(color: AppTheme.textLight, fontSize: 16, fontWeight: FontWeight.bold),
+              ),
+            ),
+          ],
+        ),
+        content: Text(
+          '$name adlı ${isCompany ? "şirket" : "teknik ressam"} kaydı ağdan silinecek ve tüm Nostr rölelerine Kind 5 moderasyon silme sinyali gönderilecektir.\n\nEmin misiniz?',
+          style: const TextStyle(color: AppTheme.textMuted, fontSize: 13, height: 1.5),
+        ),
+        actions: [
+          TextButton(
+            child: const Text('İptal', style: TextStyle(color: AppTheme.textMuted)),
+            onPressed: () => Navigator.of(ctx).pop(false),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppTheme.statusDanger,
+              foregroundColor: Colors.white,
+            ),
+            child: const Text('Ağdan Sil & Engelle', style: TextStyle(fontWeight: FontWeight.bold)),
+            onPressed: () => Navigator.of(ctx).pop(true),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm == true && peerId.isNotEmpty) {
+      await _p2pService.broadcastModerationDelete(peerId);
+      await _loadAdminData();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            backgroundColor: AppTheme.statusSuccess,
+            content: Text('✓ $name hesabı KO|Apps Admin tarafından ağdan temizlendi.'),
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _purgeJunkAccounts() async {
+    final junkCandidates = _draftsmen.where((c) {
+      final name = (c['name'] as String? ?? '').trim().toLowerCase();
+      final branch = (c['branch'] as String? ?? '').trim().toLowerCase();
+      final bio = (c['bio'] as String? ?? '').trim().toLowerCase();
+      return name == 'test' ||
+          name.contains('deneme') ||
+          name.contains('dummy') ||
+          name.contains('asdf') ||
+          name == 'null' ||
+          name.isEmpty ||
+          branch == 'null' ||
+          (name.contains('test') && bio.isEmpty);
+    }).toList();
+
+    if (junkCandidates.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          backgroundColor: AppTheme.cyanLine,
+          content: Text('Ağda tespit edilen şüpheli veya çöp test hesabı bulunamadı.'),
+        ),
+      );
+      return;
+    }
+
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppTheme.blueprintDark,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+          side: const BorderSide(color: AppTheme.amberSteel, width: 1.5),
+        ),
+        title: const Row(
+          children: [
+            Icon(Icons.cleaning_services, color: AppTheme.amberSteel),
+            SizedBox(width: 8),
+            Text('Çöp Kayıtları Temizle', style: TextStyle(color: AppTheme.textLight, fontSize: 16)),
+          ],
+        ),
+        content: Text(
+          'Ağda otomatik olarak ${junkCandidates.length} adet test/çöp kayıt tespit edildi:\n\n'
+          '${junkCandidates.map((c) => '• ${c['name']} (${c['branch']})').join('\n')}\n\n'
+          'Bu kayıtlar ağdan ve tüm rölelerden temizlensin mi?',
+          style: const TextStyle(color: AppTheme.textMuted, fontSize: 13, height: 1.5),
+        ),
+        actions: [
+          TextButton(
+            child: const Text('İptal', style: TextStyle(color: AppTheme.textMuted)),
+            onPressed: () => Navigator.of(ctx).pop(false),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppTheme.amberSteel,
+              foregroundColor: AppTheme.blueprintDark,
+            ),
+            child: const Text('Tümünü Temizle', style: TextStyle(fontWeight: FontWeight.bold)),
+            onPressed: () => Navigator.of(ctx).pop(true),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm == true) {
+      setState(() => _isLoading = true);
+      for (final j in junkCandidates) {
+        final id = j['id'] as String? ?? j['publicKey'] as String? ?? '';
+        if (id.isNotEmpty) {
+          await _p2pService.broadcastModerationDelete(id);
+        }
+      }
+      await _loadAdminData();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            backgroundColor: AppTheme.statusSuccess,
+            content: Text('✓ ${junkCandidates.length} adet çöp kayıt başarıyla ağdan silindi.'),
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _restoreDeleted(String peerId) async {
+    await _localDb.unblockUser(peerId);
+    final deleted = await _localDb.getDeletedCandidates();
+    deleted.remove(peerId);
+    await _localDb.clearDeletedCandidates();
+    for (final id in deleted) {
+      await _localDb.addDeletedCandidate(id);
+    }
+    await _p2pService.clearDeletedCandidates();
+    await _loadAdminData();
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          backgroundColor: AppTheme.statusSuccess,
+          content: Text('✓ Kaydın engeli kaldırıldı ve ağdan tekrar yüklendi.'),
+        ),
+      );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: AppTheme.blueprintDark,
+      body: SafeArea(
+        child: Column(
+          children: [
+            BlueprintHeader(
+              title: '👑 KO|APPS MASTER ADMİN',
+              trailing: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                decoration: BoxDecoration(
+                  color: AppTheme.statusDanger.withValues(alpha: 0.15),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: AppTheme.statusDanger.withValues(alpha: 0.5)),
+                ),
+                child: const Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.shield, size: 14, color: AppTheme.statusDanger),
+                    SizedBox(width: 4),
+                    Text(
+                      'Admin',
+                      style: TextStyle(color: AppTheme.statusDanger, fontSize: 11, fontWeight: FontWeight.bold),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+
+            // Stat Cards
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: _buildStatCard(
+                      label: 'Ressamlar',
+                      value: '${_draftsmen.length}',
+                      icon: Icons.architecture,
+                      color: AppTheme.cyanLine,
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: _buildStatCard(
+                      label: 'Şirketler',
+                      value: '${_companies.length}',
+                      icon: Icons.business,
+                      color: AppTheme.amberSteel,
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: _buildStatCard(
+                      label: 'Temizlenen',
+                      value: '${_deletedCandidateIds.length}',
+                      icon: Icons.block,
+                      color: AppTheme.statusDanger,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+
+            // Action Bar
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: ElevatedButton.icon(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: AppTheme.amberSteel,
+                        foregroundColor: AppTheme.blueprintDark,
+                        padding: const EdgeInsets.symmetric(vertical: 10),
+                      ),
+                      icon: const Icon(Icons.cleaning_services, size: 16),
+                      label: const Text('Çöp Hesapları Temizle', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
+                      onPressed: _purgeJunkAccounts,
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  IconButton(
+                    icon: const Icon(Icons.refresh, color: AppTheme.cyanLine),
+                    tooltip: 'Ağı Tara',
+                    onPressed: _refreshFromRelays,
+                  ),
+                ],
+              ),
+            ),
+
+            // Tabs
+            Container(
+              margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              decoration: BoxDecoration(
+                color: AppTheme.blueprintSurface,
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: AppTheme.steelBorder),
+              ),
+              child: TabBar(
+                controller: _tabController,
+                indicatorColor: AppTheme.cyanLine,
+                labelColor: AppTheme.cyanLine,
+                unselectedLabelColor: AppTheme.textMuted,
+                tabs: [
+                  Tab(text: 'Ressamlar (${_draftsmen.length})'),
+                  Tab(text: 'Şirketler (${_companies.length})'),
+                  Tab(text: 'Engellenenler (${_deletedCandidateIds.length})'),
+                ],
+              ),
+            ),
+
+            // Tab Views
+            Expanded(
+              child: _isLoading
+                  ? const Center(child: CircularProgressIndicator(color: AppTheme.cyanLine))
+                  : TabBarView(
+                      controller: _tabController,
+                      children: [
+                        _buildDraftsmenList(),
+                        _buildCompaniesList(),
+                        _buildDeletedList(),
+                      ],
+                    ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildStatCard({
+    required String label,
+    required String value,
+    required IconData icon,
+    required Color color,
+  }) {
+    return Container(
+      padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 8),
+      decoration: BoxDecoration(
+        color: AppTheme.blueprintSurface,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: color.withValues(alpha: 0.3)),
+      ),
+      child: Column(
+        children: [
+          Icon(icon, color: color, size: 18),
+          const SizedBox(height: 4),
+          Text(
+            value,
+            style: TextStyle(color: color, fontSize: 18, fontWeight: FontWeight.bold),
+          ),
+          Text(
+            label,
+            style: const TextStyle(color: AppTheme.textMuted, fontSize: 11),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildDraftsmenList() {
+    if (_draftsmen.isEmpty) {
+      return const Center(
+        child: Text('Ağda keşfedilen teknik ressam bulunamadı.', style: TextStyle(color: AppTheme.textMuted)),
+      );
+    }
+    return ListView.builder(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      itemCount: _draftsmen.length,
+      itemBuilder: (context, index) {
+        final d = _draftsmen[index];
+        final name = d['name'] as String? ?? 'İsimsiz';
+        final branch = d['branch'] as String? ?? 'Belirtilmedi';
+        final city = d['city'] as String? ?? 'Şehir Yok';
+        final peerId = d['id'] as String? ?? d['publicKey'] as String? ?? '';
+        final isVerified = d['isVerified'] == true || d['diplomaBarcode'] != null;
+
+        return Card(
+          color: AppTheme.blueprintCard,
+          margin: const EdgeInsets.only(bottom: 8),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(10),
+            side: BorderSide(color: isVerified ? AppTheme.cyanLine.withValues(alpha: 0.4) : AppTheme.steelBorder),
+          ),
+          child: ListTile(
+            leading: CircleAvatar(
+              backgroundColor: AppTheme.cyanLine.withValues(alpha: 0.15),
+              child: const Icon(Icons.architecture, color: AppTheme.cyanLine),
+            ),
+            title: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    name,
+                    style: const TextStyle(color: AppTheme.textLight, fontWeight: FontWeight.bold, fontSize: 14),
+                  ),
+                ),
+                if (isVerified)
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: AppTheme.cyanLine.withValues(alpha: 0.15),
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    child: const Text('✓ Onaylı', style: TextStyle(color: AppTheme.cyanLine, fontSize: 10)),
+                  ),
+              ],
+            ),
+            subtitle: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('$branch • $city', style: const TextStyle(color: AppTheme.textMuted, fontSize: 12)),
+                Text(
+                  peerId.length > 20 ? '${peerId.substring(0, 16)}...' : peerId,
+                  style: const TextStyle(fontFamily: 'monospace', color: AppTheme.textSubtle, fontSize: 10),
+                ),
+              ],
+            ),
+            trailing: IconButton(
+              icon: const Icon(Icons.delete_forever, color: AppTheme.statusDanger),
+              tooltip: 'Ağdan Sil & Engelle',
+              onPressed: () => _deleteTarget(d, isCompany: false),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildCompaniesList() {
+    if (_companies.isEmpty) {
+      return const Center(
+        child: Text('Ağda henüz başka şirket kaydı keşfedilmedi.', style: TextStyle(color: AppTheme.textMuted)),
+      );
+    }
+    return ListView.builder(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      itemCount: _companies.length,
+      itemBuilder: (context, index) {
+        final c = _companies[index];
+        final name = c['name'] as String? ?? 'İsimsiz Şirket';
+        final branch = c['branch'] as String? ?? 'Sektör';
+        final city = c['city'] as String? ?? '';
+        final peerId = c['publicKey'] as String? ?? c['id'] as String? ?? '';
+
+        return Card(
+          color: AppTheme.blueprintCard,
+          margin: const EdgeInsets.only(bottom: 8),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(10),
+            side: const BorderSide(color: AppTheme.steelBorder),
+          ),
+          child: ListTile(
+            leading: CircleAvatar(
+              backgroundColor: AppTheme.amberSteel.withValues(alpha: 0.15),
+              child: const Icon(Icons.business, color: AppTheme.amberSteel),
+            ),
+            title: Text(
+              name,
+              style: const TextStyle(color: AppTheme.textLight, fontWeight: FontWeight.bold, fontSize: 14),
+            ),
+            subtitle: Text(
+              '$branch • $city\n$peerId',
+              style: const TextStyle(color: AppTheme.textMuted, fontSize: 11),
+              maxLines: 2,
+            ),
+            trailing: IconButton(
+              icon: const Icon(Icons.delete_forever, color: AppTheme.statusDanger),
+              tooltip: 'Ağdan Sil & Engelle',
+              onPressed: () => _deleteTarget(c, isCompany: true),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildDeletedList() {
+    if (_deletedCandidateIds.isEmpty) {
+      return const Center(
+        child: Text('Şu ana kadar engellenen/silinen bir hesap yok.', style: TextStyle(color: AppTheme.textMuted)),
+      );
+    }
+    return ListView.builder(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      itemCount: _deletedCandidateIds.length,
+      itemBuilder: (context, index) {
+        final id = _deletedCandidateIds[index];
+        return Card(
+          color: AppTheme.blueprintCard,
+          margin: const EdgeInsets.only(bottom: 8),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(10),
+            side: BorderSide(color: AppTheme.statusDanger.withValues(alpha: 0.4)),
+          ),
+          child: ListTile(
+            leading: const Icon(Icons.block, color: AppTheme.statusDanger),
+            title: Text(
+              id,
+              style: const TextStyle(fontFamily: 'monospace', color: AppTheme.textLight, fontSize: 11),
+            ),
+            subtitle: const Text('Ağdan Silindi / Engellendi', style: TextStyle(color: AppTheme.statusDanger, fontSize: 11)),
+            trailing: TextButton.icon(
+              icon: const Icon(Icons.undo, size: 14, color: AppTheme.cyanLine),
+              label: const Text('Geri Al', style: TextStyle(color: AppTheme.cyanLine, fontSize: 12)),
+              onPressed: () => _restoreDeleted(id),
+            ),
+          ),
+        );
+      },
+    );
+  }
+}

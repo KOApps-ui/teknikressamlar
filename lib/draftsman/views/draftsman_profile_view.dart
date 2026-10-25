@@ -15,7 +15,6 @@ import '../../core/services/edevlet_service.dart';
 import '../../core/utils/file_helper.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/widgets/blueprint_header.dart';
-import '../../core/widgets/account_removal_dialog.dart';
 import '../../core/widgets/battery_optimization_dialog.dart';
 import '../../core/widgets/app_mode_selector_view.dart';
 import '../../core/services/recovery_key_backup_service.dart';
@@ -1290,20 +1289,52 @@ class _DraftsmanProfileViewState extends State<DraftsmanProfileView> {
   }
 
   Future<void> _deleteAccount() async {
-    final res = await AccountRemovalDialog.confirm(
+    final confirm = await showDialog<bool>(
       context: context,
-      title: 'Hesabı Kalıcı Sil',
-      message: 'Profiliniz, kriptografik anahtarlarınız ve teklifler kalıcı olarak silinecektir.',
-      profile: _currentProfile,
-      confirmLabel: 'KALICI OLARAK SİL',
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppTheme.blueprintDark,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+          side: const BorderSide(color: AppTheme.statusDanger, width: 1.5),
+        ),
+        title: const Row(
+          children: [
+            Icon(Icons.warning_amber_rounded, color: AppTheme.statusDanger, size: 24),
+            SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                'Hesabı Kalıcı Olarak Sil',
+                style: TextStyle(
+                  color: AppTheme.textLight,
+                  fontSize: 16,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ),
+          ],
+        ),
+        content: const Text(
+          'Teknik ressam profiliniz, portföyünüz ve gelen tüm teklifleriniz bu cihazdan kalıcı olarak silinecektir.\n\nEmin misiniz?',
+          style: TextStyle(color: AppTheme.textMuted, fontSize: 13, height: 1.5),
+        ),
+        actions: [
+          TextButton(
+            child: const Text('İptal', style: TextStyle(color: AppTheme.textMuted)),
+            onPressed: () => Navigator.of(ctx).pop(false),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppTheme.statusDanger,
+              foregroundColor: Colors.white,
+            ),
+            child: const Text('Kalıcı Olarak Sil', style: TextStyle(fontWeight: FontWeight.bold)),
+            onPressed: () => Navigator.of(ctx).pop(true),
+          ),
+        ],
+      ),
     );
 
-    if (res.decision == RemovalDecision.restoreBackup && res.backup != null) {
-      await RecoveryKeyBackupService().restoreToLocal(res.backup!);
-      if (mounted) widget.onProfileSaved?.call();
-      return;
-    }
-    if (res.decision == RemovalDecision.confirmDelete && mounted) {
+    if (confirm == true && mounted) {
       await BackgroundService.stop();
       await _p2pService.dispose();
       await _localDb.deleteUserProfile();

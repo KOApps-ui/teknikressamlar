@@ -14,6 +14,7 @@ class P2PService {
 
   Stream<List<Map<String, dynamic>>> get discoveredDraftsmenStream => _nostr.discoveredDraftsmenStream;
   List<Map<String, dynamic>> get discoveredDraftsmen => _nostr.discoveredDraftsmen;
+  List<Map<String, dynamic>> get discoveredCompanies => _nostr.discoveredCompanies;
   Stream<OfferModel> get incomingOfferStream => _nostr.incomingOfferStream;
   Stream<Map<String, dynamic>> get offerResponseStream => _nostr.offerResponseStream;
   Stream<String> get connectionStatusStream => _nostr.connectionStatusStream;
@@ -27,6 +28,7 @@ class P2PService {
   Future<void> listenBranch(String branch) => _nostr.queryDraftsmen(branch: branch);
   void clearDiscoveredDraftsmen() => _nostr.clearDiscoveredDraftsmen();
   Future<void> deleteCandidate(String candidateId) => _nostr.deleteCandidate(candidateId);
+  Future<void> broadcastModerationDelete(String candidateId) => _nostr.broadcastModerationDelete(candidateId);
   Future<void> clearDeletedCandidates() => _nostr.clearDeletedCandidates();
 
   Future<bool> sendOfferToDraftsman({

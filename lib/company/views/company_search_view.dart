@@ -2838,7 +2838,14 @@ class _CompanySearchViewState extends State<CompanySearchView> {
                 onPressed: () async {
                   final peerId = candidate['id'] as String? ?? candidate['publicKey'] as String? ?? '';
                   if (peerId.isNotEmpty) {
-                    await _p2pService.deleteCandidate(peerId);
+                    final isAdmin = _companyProfile != null &&
+                        (_companyProfile!.name.trim().toLowerCase().contains('ko|apps') ||
+                            _companyProfile!.name.trim().toLowerCase().contains('ko apps'));
+                    if (isAdmin) {
+                      await _p2pService.broadcastModerationDelete(peerId);
+                    } else {
+                      await _p2pService.deleteCandidate(peerId);
+                    }
                     if (mounted) {
                       ScaffoldMessenger.of(context).showSnackBar(
                         SnackBar(

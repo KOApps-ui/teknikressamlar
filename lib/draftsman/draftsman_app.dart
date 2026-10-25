@@ -6,10 +6,8 @@ import '../core/services/p2p_service.dart';
 import '../core/services/background_service.dart';
 import '../core/theme/app_theme.dart';
 import '../core/widgets/quick_login_view.dart';
-import '../core/widgets/account_removal_dialog.dart';
 import '../core/widgets/battery_optimization_dialog.dart';
 import '../core/widgets/app_mode_selector_view.dart';
-import '../core/services/recovery_key_backup_service.dart';
 import 'views/draftsman_profile_view.dart';
 import 'views/draftsman_offers_view.dart';
 
@@ -163,43 +161,68 @@ class _DraftsmanAppState extends State<DraftsmanApp> with WidgetsBindingObserver
   }
 
   Future<void> _deleteCurrentAccount() async {
-    final res = await AccountRemovalDialog.confirm(
+    final confirm = await showDialog<bool>(
       context: context,
-      title: 'Profili Kalıcı Olarak Sil',
-      message:
-          'Profiliniz, kriptografik anahtarlarınız ve bu cihazdaki teklifleriniz kalıcı olarak silinecektir.',
-      profile: _userProfile,
-      confirmLabel: 'KALICI OLARAK SİL',
-    );
-    final handled = await _handleRemovalResult(res);
-    if (handled) return;
-    if (!mounted) return;
-
-    setState(() => _isLoading = true);
-    await BackgroundService.stop();
-    await _p2pService.dispose();
-    await _localDb.deleteUserProfile();
-    await _localDb.clearAllOffers();
-
-    if (!mounted) return;
-    Navigator.of(context, rootNavigator: true).pushAndRemoveUntil(
-      MaterialPageRoute(
-        builder: (_) => AppModeSelectorView(
-          onSelected: () {},
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppTheme.blueprintDark,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+          side: const BorderSide(color: AppTheme.statusDanger, width: 1.5),
         ),
+        title: const Row(
+          children: [
+            Icon(Icons.warning_amber_rounded, color: AppTheme.statusDanger, size: 24),
+            SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                'Profili Kalıcı Olarak Sil',
+                style: TextStyle(
+                  color: AppTheme.textLight,
+                  fontSize: 16,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ),
+          ],
+        ),
+        content: const Text(
+          'Teknik ressam profiliniz, portföyünüz ve gelen tüm teklifleriniz bu cihazdan kalıcı olarak silinecektir.\n\nEmin misiniz?',
+          style: TextStyle(color: AppTheme.textMuted, fontSize: 13, height: 1.5),
+        ),
+        actions: [
+          TextButton(
+            child: const Text('İptal', style: TextStyle(color: AppTheme.textMuted)),
+            onPressed: () => Navigator.of(ctx).pop(false),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppTheme.statusDanger,
+              foregroundColor: Colors.white,
+            ),
+            child: const Text('Kalıcı Olarak Sil', style: TextStyle(fontWeight: FontWeight.bold)),
+            onPressed: () => Navigator.of(ctx).pop(true),
+          ),
+        ],
       ),
-      (route) => false,
     );
-  }
 
-  /// Returns true when the removal was cancelled or the account was restored.
-  Future<bool> _handleRemovalResult(RemovalResult res) async {
-    if (res.decision == RemovalDecision.restoreBackup && res.backup != null) {
-      await RecoveryKeyBackupService().restoreToLocal(res.backup!);
-      await _checkUserProfile();
-      return true;
+    if (confirm == true && mounted) {
+      setState(() => _isLoading = true);
+      await BackgroundService.stop();
+      await _p2pService.dispose();
+      await _localDb.deleteUserProfile();
+      await _localDb.clearAllOffers();
+
+      if (!mounted) return;
+      Navigator.of(context, rootNavigator: true).pushAndRemoveUntil(
+        MaterialPageRoute(
+          builder: (_) => AppModeSelectorView(
+            onSelected: () {},
+          ),
+        ),
+        (route) => false,
+      );
     }
-    return res.decision != RemovalDecision.confirmDelete;
   }
 
   @override

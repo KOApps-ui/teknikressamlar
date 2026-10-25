@@ -94,6 +94,7 @@ class NostrService {
   Timer? _draftsmenDebounceTimer;
 
   final Map<String, Map<String, dynamic>> _discoveredDraftsmen = {};
+  final Map<String, Map<String, dynamic>> _discoveredCompanies = {};
   final Set<String> _deletedCandidateIds = {};
   final Map<String, Completer<String?>> _pendingFileCompleters = {};
 
@@ -108,6 +109,7 @@ class NostrService {
 
   Stream<List<Map<String, dynamic>>> get discoveredDraftsmenStream => _draftsmenController.stream;
   List<Map<String, dynamic>> get discoveredDraftsmen => _discoveredDraftsmen.values.toList();
+  List<Map<String, dynamic>> get discoveredCompanies => _discoveredCompanies.values.toList();
   Stream<OfferModel> get incomingOfferStream => _incomingOfferController.stream;
   Stream<Map<String, dynamic>> get offerResponseStream => _offerResponseController.stream;
   Stream<String> get connectionStatusStream => _connectionStatusController.stream;
@@ -158,9 +160,31 @@ class NostrService {
   Future<void> deleteCandidate(String peerId) async {
     _deletedCandidateIds.add(peerId);
     _discoveredDraftsmen.remove(peerId);
+    _discoveredCompanies.remove(peerId);
     await _localDb.addDeletedCandidate(peerId);
     _safeAddDraftsmen(_discoveredDraftsmen.values.toList());
     debugPrint('Candidate $peerId permanently removed from discovered list.');
+  }
+
+  Future<void> broadcastModerationDelete(String peerId) async {
+    await deleteCandidate(peerId);
+    if (_keys == null) return;
+    try {
+      final event = Event.from(
+        kind: 5,
+        content: 'Account removed by KO|Apps admin',
+        secretKey: _keys!.secret,
+        tags: [
+          ['p', peerId],
+          ['t', 'ko_apps_teknikressam'],
+          ['t', 'moderation_ban'],
+        ],
+      );
+      _publishEventToPool(event);
+      debugPrint('Moderation deletion event published to relays for $peerId');
+    } catch (e) {
+      debugPrint('Error broadcasting moderation delete: $e');
+    }
   }
 
   Future<void> clearDeletedCandidates() async {
@@ -549,18 +573,16 @@ class NostrService {
       }
     ]));
 
-    // 2. If Company, also subscribe to all Draftsmen profiles
+    // 2. If Company, also subscribe to all Draftsmen profiles and moderation events
     if (_currentUser?.role != 'draftsman') {
       const subDiscovery = 'sub_discovery_company';
-      final recentSince = DateTime.now().subtract(const Duration(minutes: 90)).millisecondsSinceEpoch ~/ 1000;
       ws.sink.add(json.encode([
         'REQ',
         subDiscovery,
         {
-          'kinds': [0],
+          'kinds': [0, 5],
           '#t': discoveryTags,
-          'since': recentSince,
-          'limit': 100,
+          'limit': 250,
         },
       ]));
     }
@@ -589,17 +611,32 @@ class NostrService {
 
     if (kind == 0) {
       // Profile Metadata Event
-      if (_currentUser?.role != 'draftsman') {
-        try {
-          final profileData = json.decode(content) as Map<String, dynamic>;
-          final role = profileData['role'] as String?;
-          if (role != 'company') {
-            profileData['id'] = senderPubkey ?? profileData['id'];
-            profileData['publicKey'] = senderPubkey ?? profileData['publicKey'];
-            _handleDiscoveredCandidate(profileData);
+      try {
+        final profileData = json.decode(content) as Map<String, dynamic>;
+        final role = profileData['role'] as String?;
+        profileData['id'] = senderPubkey ?? profileData['id'];
+        profileData['publicKey'] = senderPubkey ?? profileData['publicKey'];
+
+        if (role == 'company') {
+          final pk = profileData['publicKey'] as String? ?? '';
+          if (pk.isNotEmpty) {
+            _discoveredCompanies[pk] = profileData;
           }
-        } catch (_) {}
-      }
+        } else if (_currentUser?.role != 'draftsman') {
+          _handleDiscoveredCandidate(profileData);
+        }
+      } catch (_) {}
+    } else if (kind == 5) {
+      // Moderation Deletion Event (NIP-09)
+      try {
+        final tags = event['tags'] as List? ?? [];
+        for (final t in tags) {
+          if (t is List && t.length >= 2 && t[0] == 'p') {
+            final targetPubkey = t[1] as String;
+            deleteCandidate(targetPubkey);
+          }
+        }
+      } catch (_) {}
     } else if (kind == 21000) {
       // Encrypted Direct Application Event (Offers / Responses / File Chunks)
       if (_keys == null || senderPubkey == null) return;
@@ -658,15 +695,9 @@ class NostrService {
       return;
     }
 
-    // Filter out historical test accounts (> 60 minutes inactive) unless active on local Wi-Fi LAN
-    final isLan = profileMap['lanIp'] != null;
-    final lastSeenRaw = profileMap['lastSeen'] as String?;
-    if (!isLan) {
-      if (lastSeenRaw == null) return;
-      final dt = DateTime.tryParse(lastSeenRaw);
-      if (dt != null && DateTime.now().difference(dt).inMinutes.abs() > 60) {
-        return;
-      }
+    // Filter out dummy/empty test accounts
+    if (lowerName == 'dummy' || lowerName == 'test dummy') {
+      return;
     }
 
     final rawKey = profileMap['publicKey'] as String? ?? profileMap['id'] as String?;
@@ -870,17 +901,15 @@ class NostrService {
     });
     await _sendLanBroadcast(pingPayload);
 
-    // 2. Nostr REQ to pool for all known tag versions
+    // 2. Nostr REQ to pool for all known tag versions and moderation events
     final subDiscovery = 'sub_disc_${DateTime.now().millisecondsSinceEpoch % 100000}';
-    final recentSince = DateTime.now().subtract(const Duration(minutes: 90)).millisecondsSinceEpoch ~/ 1000;
     final reqMsg = json.encode([
       'REQ',
       subDiscovery,
       {
-        'kinds': [0],
+        'kinds': [0, 5],
         '#t': discoveryTags,
-        'since': recentSince,
-        'limit': 100,
+        'limit': 250,
       },
     ]);
 

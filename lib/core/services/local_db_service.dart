@@ -79,8 +79,10 @@ class LocalDbService {
 
   Future<void> deleteUserProfile() async {
     await _ensureInit();
-    await _userBox?.delete('current_user');
-    await _userBox?.delete('is_logged_in');
+    await _userBox?.clear();
+    await _userBox?.flush();
+    await _settingsBox?.delete('active_role');
+    await _settingsBox?.flush();
   }
 
   Future<void> addPortfolioFile(PortfolioFile file) async {

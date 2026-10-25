@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:ui' as ui;
@@ -15,6 +16,7 @@ import '../../core/services/subscription_service.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/widgets/blueprint_header.dart';
 import '../../core/widgets/subscription_modal.dart';
+import '../../core/widgets/account_removal_dialog.dart';
 import '../../core/widgets/battery_optimization_dialog.dart';
 import '../../core/services/recovery_key_backup_service.dart';
 import '../../core/services/background_service.dart';
@@ -498,60 +500,31 @@ class _CompanyProfileViewState extends State<CompanyProfileView> {
   }
 
   Future<void> _deleteAccount() async {
-    final confirm = await showDialog<bool>(
+    final res = await AccountRemovalDialog.confirm(
       context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: AppTheme.blueprintDark,
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(16),
-          side: const BorderSide(color: AppTheme.statusDanger, width: 1.5),
-        ),
-        title: const Row(
-          children: [
-            Icon(Icons.warning_amber_rounded, color: AppTheme.statusDanger, size: 24),
-            SizedBox(width: 8),
-            Expanded(
-              child: Text(
-                'Şirket Hesabını Kalıcı Olarak Sil',
-                style: TextStyle(
-                  color: AppTheme.textLight,
-                  fontSize: 16,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-            ),
-          ],
-        ),
-        content: const Text(
-          'Şirket profiliniz, kimlik anahtarlarınız ve bu cihazdaki tüm teklifleriniz kalıcı olarak silinecektir.\n\nEmin misiniz?',
-          style: TextStyle(color: AppTheme.textMuted, fontSize: 13, height: 1.5),
-        ),
-        actions: [
-          TextButton(
-            child: const Text('İptal', style: TextStyle(color: AppTheme.textMuted)),
-            onPressed: () => Navigator.of(ctx).pop(false),
-          ),
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(
-              backgroundColor: AppTheme.statusDanger,
-              foregroundColor: Colors.white,
-            ),
-            child: const Text('Kalıcı Olarak Sil', style: TextStyle(fontWeight: FontWeight.bold)),
-            onPressed: () => Navigator.of(ctx).pop(true),
-          ),
-        ],
-      ),
+      title: 'Şirket Profilini ve Verileri Sil',
+      message:
+          'Şirket profiliniz, kimlik anahtarlarınız ve bu cihazdaki tüm teklifleriniz kalıcı olarak silinecektir.',
+      profile: _companyProfile,
+      confirmLabel: 'KALICI OLARAK SİL',
     );
 
-    if (confirm == true && mounted) {
+    if (res.decision == RemovalDecision.restoreBackup && res.backup != null) {
+      await RecoveryKeyBackupService().restoreToLocal(res.backup!);
+      if (mounted) widget.onProfileSaved?.call();
+      return;
+    }
+
+    if (res.decision == RemovalDecision.confirmDelete && mounted) {
       try {
-        await BackgroundService.stop();
-        await _p2pService.dispose();
         await _localDb.deleteUserProfile();
         await _localDb.clearAllOffers();
+        unawaited(BackgroundService.stop());
+        unawaited(_p2pService.dispose());
       } catch (e) {
         debugPrint('Account deletion error: $e');
       }
+
       if (mounted) {
         TeknikRessamlarApp.resetToModeSelector(context);
       }

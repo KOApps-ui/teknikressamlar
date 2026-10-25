@@ -59,11 +59,19 @@ class RecoveryKeyBackupService {
   /// Writes / overwrites the canonical snapshot for this profile and returns
   /// the stored backup.
   Future<AccountBackup?> backupProfile(UserProfile profile) async {
-    if (kIsWeb) return null;
     if (profile.publicKey.trim().isEmpty) return null;
     try {
       final offers = await _offersOf(profile);
       final savedAt = DateTime.now();
+
+      if (kIsWeb) {
+        return AccountBackup(
+          profile: profile,
+          offers: offers,
+          savedAt: savedAt,
+          filePath: 'Tarayıcı Yerel Kasası',
+        );
+      }
 
       final payload = <String, dynamic>{
         'version': 2,

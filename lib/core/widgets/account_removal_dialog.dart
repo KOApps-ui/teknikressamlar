@@ -1,3 +1,5 @@
+import 'dart:convert';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../models/user_profile.dart';
@@ -235,9 +237,23 @@ class AccountRemovalDialog {
                         padding: const EdgeInsets.symmetric(vertical: 8),
                         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
                       ),
-                      icon: const Icon(Icons.ios_share, size: 14),
-                      label: const Text('Yedeği Aç', style: TextStyle(fontSize: 11)),
-                      onPressed: () => FileLauncherService.openFile(backup.filePath),
+                      icon: Icon(kIsWeb ? Icons.copy : Icons.ios_share, size: 14),
+                      label: Text(kIsWeb ? 'Yedeği Kopyala' : 'Yedeği Aç', style: const TextStyle(fontSize: 11)),
+                      onPressed: () async {
+                        if (kIsWeb) {
+                          await Clipboard.setData(ClipboardData(text: json.encode(backup.profile.toMap())));
+                          if (ctx.mounted) {
+                            ScaffoldMessenger.of(ctx).showSnackBar(
+                              const SnackBar(
+                                backgroundColor: AppTheme.statusSuccess,
+                                content: Text('✓ Profil yedeği panoya kopyalandı.'),
+                              ),
+                            );
+                          }
+                        } else {
+                          FileLauncherService.openFile(backup.filePath);
+                        }
+                      },
                     ),
                   ),
               ],

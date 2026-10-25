@@ -6,6 +6,7 @@ import 'core/services/background_service.dart';
 import 'core/services/notification_service.dart';
 import 'core/theme/app_theme.dart';
 import 'core/widgets/app_mode_selector_view.dart';
+import 'core/widgets/app_update_dialog.dart';
 import 'draftsman/draftsman_app.dart';
 import 'company/company_app.dart';
 
@@ -87,6 +88,12 @@ class TeknikRessamlarAppState extends State<TeknikRessamlarApp> {
       setState(() {
         _profile = profile;
         _isLoading = false;
+      });
+
+      Future.delayed(const Duration(seconds: 2), () {
+        if (mounted) {
+          AppUpdateDialog.checkAndShow(context, force: false);
+        }
       });
     }
   }

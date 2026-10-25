@@ -18,6 +18,8 @@ import '../../core/widgets/blueprint_header.dart';
 import '../../core/widgets/subscription_modal.dart';
 import '../../core/widgets/account_removal_dialog.dart';
 import '../../core/widgets/battery_optimization_dialog.dart';
+import '../../core/widgets/app_update_dialog.dart';
+import '../../core/constants/app_version.dart';
 import '../../core/services/recovery_key_backup_service.dart';
 import '../../core/services/background_service.dart';
 import '../../main.dart';
@@ -1745,7 +1747,54 @@ class _CompanyProfileViewState extends State<CompanyProfileView> {
                   onPressed: _saveProfile,
                 ),
               ),
-              const SizedBox(height: 10),
+              const SizedBox(height: 12),
+
+              // Sürüm & Güncelleme Denetimi
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                decoration: BoxDecoration(
+                  color: AppTheme.blueprintSurface,
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: AppTheme.steelBorder),
+                ),
+                child: Row(
+                  children: [
+                    const Icon(Icons.verified_outlined, color: AppTheme.cyanLine, size: 18),
+                    const SizedBox(width: 10),
+                    const Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'KO|Apps Teknik Ressamlar',
+                            style: TextStyle(color: AppTheme.textLight, fontSize: 12, fontWeight: FontWeight.bold),
+                          ),
+                          Text(
+                            'Sürüm: v${AppVersion.version}',
+                            style: TextStyle(color: AppTheme.textMuted, fontSize: 10),
+                          ),
+                        ],
+                      ),
+                    ),
+                    OutlinedButton.icon(
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: AppTheme.cyanLine,
+                        side: const BorderSide(color: AppTheme.cyanLine),
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                      ),
+                      icon: const Icon(Icons.system_update_alt, size: 14),
+                      label: const Text('Güncelle', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
+                      onPressed: () => AppUpdateDialog.checkAndShow(
+                        context,
+                        force: true,
+                        showIfNotAvailable: true,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 6),
 
               // Alt aksiyonlar (Çıkış Yap & Hesabı Sil)
               Row(

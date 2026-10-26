@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:ui' as ui;
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:file_picker/file_picker.dart';
@@ -18,9 +19,8 @@ import '../../core/theme/app_theme.dart';
 import '../../core/widgets/blueprint_header.dart';
 import '../../core/widgets/battery_optimization_dialog.dart';
 import '../../core/widgets/account_removal_dialog.dart';
-import '../../core/widgets/app_update_dialog.dart';
+import '../../core/widgets/app_update_card.dart';
 import '../../core/widgets/pwa_install_card.dart';
-import '../../core/constants/app_version.dart';
 import '../../core/services/recovery_key_backup_service.dart';
 import '../../core/services/background_service.dart';
 import '../../main.dart';
@@ -352,28 +352,35 @@ class _DraftsmanProfileViewState extends State<DraftsmanProfileView> {
   Future<void> _pickAvatar() async {
     try {
       final result = await FilePicker.pickFiles(type: FileType.image);
-      if (result.isNotEmpty && result.first.path != null) {
-        final originalFile = File(result.first.path!);
-        final appDir = await getApplicationDocumentsDirectory();
-        final ext = result.first.extension ?? 'jpg';
-        final targetPath = '${appDir.path}/avatar_${DateTime.now().millisecondsSinceEpoch}.$ext';
-        await originalFile.copy(targetPath);
+      if (result.isNotEmpty) {
+        final picked = result.first;
+        final ext = picked.extension ?? 'jpg';
+        String targetPath = 'avatar_${DateTime.now().millisecondsSinceEpoch}.$ext';
+        final bytes = await picked.readAsBytes();
 
-        final bytes = await originalFile.readAsBytes();
-        final base64Img = await _compressAvatarBytes(bytes);
+        if (!kIsWeb && picked.path != null) {
+          final originalFile = File(picked.path!);
+          final appDir = await getApplicationDocumentsDirectory();
+          targetPath = '${appDir.path}/avatar_${DateTime.now().millisecondsSinceEpoch}.$ext';
+          await originalFile.copy(targetPath);
+        }
 
-        setState(() {
-          _avatarPath = targetPath;
-          _avatarBase64 = base64Img;
-        });
+        if (bytes.isNotEmpty) {
+          final base64Img = await _compressAvatarBytes(bytes);
 
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              backgroundColor: AppTheme.statusSuccess,
-              content: Text('Profil fotoğrafı seçildi.'),
-            ),
-          );
+          setState(() {
+            _avatarPath = targetPath;
+            _avatarBase64 = base64Img;
+          });
+
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                backgroundColor: AppTheme.statusSuccess,
+                content: Text('Profil fotoğrafı seçildi.'),
+              ),
+            );
+          }
         }
       }
     } catch (e) {
@@ -386,25 +393,27 @@ class _DraftsmanProfileViewState extends State<DraftsmanProfileView> {
       final result = await FilePicker.pickFiles(type: FileType.any);
       if (result.isEmpty) return;
 
-      final appDir = await getApplicationDocumentsDirectory();
       int addedCount = 0;
       String lastFileName = '';
 
       for (final picked in result) {
-        if (picked.path == null) continue;
-        final originalFile = File(picked.path!);
-        if (!originalFile.existsSync()) continue;
-
         final fileName = picked.name;
         final fileExtension = picked.extension ?? (fileName.contains('.') ? fileName.split('.').last : '');
-        final targetPath = '${appDir.path}/portfolio_${DateTime.now().millisecondsSinceEpoch}_$fileName';
+        String targetPath = 'portfolio_${DateTime.now().millisecondsSinceEpoch}_$fileName';
+        final fileSize = await picked.length();
+        final bytes = await picked.readAsBytes();
 
-        await originalFile.copy(targetPath);
-        final fileSize = await originalFile.length();
+        if (!kIsWeb && picked.path != null) {
+          final originalFile = File(picked.path!);
+          if (originalFile.existsSync()) {
+            final appDir = await getApplicationDocumentsDirectory();
+            targetPath = '${appDir.path}/portfolio_${DateTime.now().millisecondsSinceEpoch}_$fileName';
+            await originalFile.copy(targetPath);
+          }
+        }
 
         String? fileBase64;
-        if (fileSize <= 350 * 1024) {
-          final bytes = await originalFile.readAsBytes();
+        if (bytes.isNotEmpty && bytes.length <= 15 * 1024 * 1024) {
           fileBase64 = base64Encode(bytes);
         }
 
@@ -415,7 +424,7 @@ class _DraftsmanProfileViewState extends State<DraftsmanProfileView> {
           filePath: targetPath,
           fileSize: fileSize,
           uploadDate: DateTime.now(),
-          description: 'Portföy Dosyası (${fileExtension.toUpperCase()})',
+          description: 'Portföy Çizimi (${fileExtension.toUpperCase()})',
           fileBase64: fileBase64,
         );
 
@@ -458,15 +467,15 @@ class _DraftsmanProfileViewState extends State<DraftsmanProfileView> {
 
   Future<void> _openPortfolioFile(PortfolioFile file) async {
     try {
-      if (file.filePath.isNotEmpty && File(file.filePath).existsSync()) {
-        await FileLauncherService.openFile(file.filePath);
+      if (file.fileBase64 != null && file.fileBase64!.isNotEmpty) {
+        await FileLauncherService.openBase64(
+          base64Content: file.fileBase64!,
+          fileName: file.fileName,
+        );
         return;
       }
-      if (file.fileBase64 != null && file.fileBase64!.isNotEmpty) {
-        final tempDir = await getTemporaryDirectory();
-        final tempFile = File('${tempDir.path}/preview_${file.fileName}');
-        await tempFile.writeAsBytes(base64Decode(file.fileBase64!));
-        await FileLauncherService.openFile(tempFile.path);
+      if (!kIsWeb && file.filePath.isNotEmpty && File(file.filePath).existsSync()) {
+        await FileLauncherService.openFile(file.filePath);
         return;
       }
       if (mounted) {
@@ -493,19 +502,23 @@ class _DraftsmanProfileViewState extends State<DraftsmanProfileView> {
         type: FileType.custom,
         allowedExtensions: ['pdf', 'doc', 'docx'],
       );
-      if (result.isEmpty || result.first.path == null) return;
+      if (result.isEmpty) return;
       final picked = result.first;
-      final originalFile = File(picked.path!);
-      if (!await originalFile.exists()) return;
+      final bytes = await picked.readAsBytes();
+      final fileSize = await picked.length();
+      String targetPath = 'cv_${DateTime.now().millisecondsSinceEpoch}_${picked.name}';
 
-      final appDir = await getApplicationDocumentsDirectory();
-      final targetPath = '${appDir.path}/cv_${DateTime.now().millisecondsSinceEpoch}_${picked.name}';
-      await originalFile.copy(targetPath);
-      final fileSize = await originalFile.length();
+      if (!kIsWeb && picked.path != null) {
+        final originalFile = File(picked.path!);
+        if (await originalFile.exists()) {
+          final appDir = await getApplicationDocumentsDirectory();
+          targetPath = '${appDir.path}/cv_${DateTime.now().millisecondsSinceEpoch}_${picked.name}';
+          await originalFile.copy(targetPath);
+        }
+      }
 
       String? cvB64;
-      if (fileSize <= 1024 * 1024) {
-        final bytes = await originalFile.readAsBytes();
+      if (bytes.isNotEmpty && bytes.length <= 15 * 1024 * 1024) {
         cvB64 = base64Encode(bytes);
       }
 
@@ -539,16 +552,16 @@ class _DraftsmanProfileViewState extends State<DraftsmanProfileView> {
 
   Future<void> _openCvFile() async {
     try {
-      if (_cvFilePath != null && File(_cvFilePath!).existsSync()) {
-        await FileLauncherService.openFile(_cvFilePath!);
+      if (_cvBase64 != null && _cvBase64!.isNotEmpty) {
+        await FileLauncherService.openBase64(
+          base64Content: _cvBase64!,
+          fileName: _cvFileName ?? 'ozgecmis.pdf',
+          mimeType: 'application/pdf',
+        );
         return;
       }
-      if (_cvBase64 != null && _cvBase64!.isNotEmpty) {
-        final tempDir = await getTemporaryDirectory();
-        final ext = _cvFileName?.contains('.') == true ? _cvFileName!.split('.').last : 'pdf';
-        final tempFile = File('${tempDir.path}/cv_preview_${DateTime.now().millisecondsSinceEpoch}.$ext');
-        await tempFile.writeAsBytes(base64Decode(_cvBase64!));
-        await FileLauncherService.openFile(tempFile.path);
+      if (!kIsWeb && _cvFilePath != null && File(_cvFilePath!).existsSync()) {
+        await FileLauncherService.openFile(_cvFilePath!);
         return;
       }
       if (mounted) {
@@ -562,10 +575,7 @@ class _DraftsmanProfileViewState extends State<DraftsmanProfileView> {
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            backgroundColor: AppTheme.statusDanger,
-            content: Text('CV açma hatası: $e'),
-          ),
+          SnackBar(backgroundColor: AppTheme.statusDanger, content: Text('CV açılamadı: $e')),
         );
       }
     }
@@ -594,17 +604,27 @@ class _DraftsmanProfileViewState extends State<DraftsmanProfileView> {
         allowedExtensions: ['pdf'],
       );
 
-      if (result.isEmpty || result.first.path == null) return;
+      if (result.isEmpty) return;
       final picked = result.first;
 
       setState(() => _isExtractingDiploma = true);
 
-      final originalFile = File(picked.path!);
-      final bytes = await originalFile.readAsBytes();
+      final bytes = await picked.readAsBytes();
+      String targetPath = 'diploma_${DateTime.now().millisecondsSinceEpoch}.pdf';
 
-      final appDir = await getApplicationDocumentsDirectory();
-      final targetPath = '${appDir.path}/diploma_${DateTime.now().millisecondsSinceEpoch}.pdf';
-      await originalFile.copy(targetPath);
+      if (!kIsWeb && picked.path != null) {
+        final originalFile = File(picked.path!);
+        if (await originalFile.exists()) {
+          final appDir = await getApplicationDocumentsDirectory();
+          targetPath = '${appDir.path}/diploma_${DateTime.now().millisecondsSinceEpoch}.pdf';
+          await originalFile.copy(targetPath);
+        }
+      }
+
+      if (bytes.isEmpty) {
+        setState(() => _isExtractingDiploma = false);
+        return;
+      }
 
       final extraction = await EDevletService.extractFromPdfBytes(bytes);
 
@@ -2437,19 +2457,20 @@ class _DraftsmanProfileViewState extends State<DraftsmanProfileView> {
                             type: FileType.custom,
                             allowedExtensions: ['pdf', 'jpg', 'jpeg', 'png'],
                           );
-                          if (res.isNotEmpty && res.first.path != null) {
+                          if (res.isNotEmpty) {
                             final picked = res.first;
-                            final path = picked.path!;
-                            final file = File(path);
-                            final bytes = await file.readAsBytes();
-                            setModalState(() {
-                              certFileName = picked.name;
-                              certFilePath = path;
-                              certFileSize = bytes.length;
-                              if (bytes.length <= 500 * 1024) {
-                                certBase64 = base64Encode(bytes);
-                              }
-                            });
+                            final bytes = await picked.readAsBytes();
+                            final path = picked.path ?? 'cert_${picked.name}';
+                            if (bytes.isNotEmpty) {
+                              setModalState(() {
+                                certFileName = picked.name;
+                                certFilePath = path;
+                                certFileSize = bytes.length;
+                                if (bytes.length <= 500 * 1024) {
+                                  certBase64 = base64Encode(bytes);
+                                }
+                              });
+                            }
                           }
                         },
                       ),
@@ -2745,51 +2766,8 @@ class _DraftsmanProfileViewState extends State<DraftsmanProfileView> {
               ),
               const SizedBox(height: 12),
 
-              // Sürüm & Güncelleme Denetimi
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                decoration: BoxDecoration(
-                  color: AppTheme.blueprintSurface,
-                  borderRadius: BorderRadius.circular(10),
-                  border: Border.all(color: AppTheme.steelBorder),
-                ),
-                child: Row(
-                  children: [
-                    const Icon(Icons.verified_outlined, color: AppTheme.cyanLine, size: 18),
-                    const SizedBox(width: 10),
-                    const Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            'KO|Apps Teknik Ressamlar',
-                            style: TextStyle(color: AppTheme.textLight, fontSize: 12, fontWeight: FontWeight.bold),
-                          ),
-                          Text(
-                            'Sürüm: v${AppVersion.version}',
-                            style: TextStyle(color: AppTheme.textMuted, fontSize: 10),
-                          ),
-                        ],
-                      ),
-                    ),
-                    OutlinedButton.icon(
-                      style: OutlinedButton.styleFrom(
-                        foregroundColor: AppTheme.cyanLine,
-                        side: const BorderSide(color: AppTheme.cyanLine),
-                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                      ),
-                      icon: const Icon(Icons.system_update_alt, size: 14),
-                      label: const Text('Güncelle', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
-                      onPressed: () => AppUpdateDialog.checkAndShow(
-                        context,
-                        force: true,
-                        showIfNotAvailable: true,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
+              // Sürüm & Güncelleme Merkezi
+              const AppUpdateCard(),
               const PWAInstallCard(compact: true),
               const SizedBox(height: 6),
               Row(

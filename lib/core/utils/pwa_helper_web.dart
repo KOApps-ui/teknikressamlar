@@ -1,4 +1,5 @@
 import 'dart:js_interop';
+import 'package:flutter/foundation.dart';
 
 @JS('canInstallPWA')
 external bool _canInstallPWA();
@@ -11,6 +12,9 @@ external bool _isPWAInstalled();
 
 @JS('refreshPWA')
 external void _refreshPWA();
+
+@JS('downloadBase64File')
+external void _downloadBase64File(JSString base64Data, JSString fileName, JSString? mimeType);
 
 class PWAHelper {
   static bool get isSupported => true;
@@ -41,5 +45,13 @@ class PWAHelper {
     try {
       _refreshPWA();
     } catch (_) {}
+  }
+
+  static void downloadBase64File(String base64Data, String fileName, [String? mimeType]) {
+    try {
+      _downloadBase64File(base64Data.toJS, fileName.toJS, mimeType?.toJS);
+    } catch (e) {
+      debugPrint('PWAHelper.downloadBase64File error: $e');
+    }
   }
 }

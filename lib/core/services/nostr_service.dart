@@ -8,6 +8,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 import '../models/user_profile.dart';
 import '../models/offer_model.dart';
+import '../utils/pwa_helper.dart';
 import 'local_db_service.dart';
 import 'notification_service.dart';
 
@@ -97,6 +98,8 @@ class NostrService {
   final Map<String, Map<String, dynamic>> _discoveredCompanies = {};
   final Set<String> _deletedCandidateIds = {};
   final Map<String, Completer<String?>> _pendingFileCompleters = {};
+  final Map<String, Map<int, String>> _incomingFileChunks = {};
+  final Map<String, String> _downloadedFilesBase64 = {};
 
   StreamController<List<Map<String, dynamic>>> _draftsmenController =
       StreamController<List<Map<String, dynamic>>>.broadcast();
@@ -740,6 +743,85 @@ class NostrService {
       } catch (e) {
         debugPrint('Error decrypting Nostr event: $e');
       }
+    } else if (kind == 1063) {
+      // Decentralized File Storage Event (NIP-94)
+      try {
+        final tags = event['tags'] as List? ?? [];
+        String fileId = '';
+        String fileName = '';
+        int chunkIdx = 0;
+        int totalChunks = 1;
+        for (final t in tags) {
+          if (t is List && t.length >= 2) {
+            final key = t[0] as String;
+            if (key == 'f') fileId = t[1] as String;
+            if (key == 'name') fileName = t[1] as String;
+            if (key == 'chunk' && t.length >= 3) {
+              chunkIdx = int.tryParse(t[1] as String) ?? 0;
+              totalChunks = int.tryParse(t[2] as String) ?? 1;
+            }
+          }
+        }
+        if (fileId.isNotEmpty && content.isNotEmpty) {
+          await _handleIncomingFileChunk(
+            fileId: fileId,
+            fileName: fileName,
+            chunkIndex: chunkIdx,
+            totalChunks: totalChunks,
+            chunkData: content,
+          );
+        }
+      } catch (e) {
+        debugPrint('Error handling kind 1063 file event: $e');
+      }
+    }
+  }
+
+  Future<void> _handleIncomingFileChunk({
+    required String fileId,
+    required String fileName,
+    required int chunkIndex,
+    required int totalChunks,
+    required String chunkData,
+  }) async {
+    _incomingFileChunks.putIfAbsent(fileId, () => {});
+    _incomingFileChunks[fileId]![chunkIndex] = chunkData;
+
+    if (_incomingFileChunks[fileId]!.length >= totalChunks) {
+      final buffer = StringBuffer();
+      for (int i = 0; i < totalChunks; i++) {
+        buffer.write(_incomingFileChunks[fileId]![i] ?? '');
+      }
+      final fullBase64 = buffer.toString();
+      _downloadedFilesBase64[fileId] = fullBase64;
+      _incomingFileChunks.remove(fileId);
+
+      String? savePath;
+      if (kIsWeb) {
+        PWAHelper.downloadBase64File(fullBase64, fileName);
+        savePath = 'web_downloaded';
+      } else {
+        try {
+          final appDocDir = await getApplicationDocumentsDirectory();
+          final downloadsDir = Directory('${appDocDir.path}/p2p_downloads');
+          if (!await downloadsDir.exists()) {
+            await downloadsDir.create(recursive: true);
+          }
+          final cleanFileName = fileName.replaceAll(RegExp(r'[\\/:*?"<>|]'), '_');
+          savePath = '${downloadsDir.path}/${fileId}_$cleanFileName';
+          final file = File(savePath);
+          await file.writeAsBytes(base64Decode(fullBase64));
+        } catch (e) {
+          debugPrint('Error writing assembled file: $e');
+        }
+      }
+
+      if (_pendingFileCompleters.containsKey(fileId)) {
+        if (!_pendingFileCompleters[fileId]!.isCompleted) {
+          _pendingFileCompleters[fileId]!.complete(savePath);
+        }
+        _pendingFileCompleters.remove(fileId);
+      }
     }
   }
 
@@ -853,35 +935,45 @@ class NostrService {
         break;
       }
     }
-    if (!kIsWeb && targetFile != null && targetFile.filePath.isNotEmpty) {
-      final fileObj = File(targetFile.filePath);
-      if (await fileObj.exists()) {
-        final bytes = await fileObj.readAsBytes();
-        if (bytes.length <= 400 * 1024) {
-          final payload = json.encode({
-            'type': 'PORTFOLIO_FILE_DATA',
-            'fileId': fileId,
-            'fileName': targetFile.fileName,
-            'extension': targetFile.fileExtension,
-            'base64': base64Encode(bytes),
-          });
-          final encrypted = await Encryption.encrypt(
-            plaintext: payload,
-            recipientPubkey: requesterPubkey,
-            senderSecretKey: _keys!.secret,
-          );
-          final event = Event.from(
-            kind: 21000,
-            content: encrypted,
-            secretKey: _keys!.secret,
-            tags: [
-              ['p', requesterPubkey],
-              ['t', 'file_response']
-            ],
-          );
-          _publishEventToPool(event);
-          debugPrint('Nostr encrypted file sent: ${targetFile.fileName} (${bytes.length} bytes)');
-        }
+    if (targetFile != null) {
+      Uint8List? bytes;
+      if (targetFile.fileBase64 != null && targetFile.fileBase64!.isNotEmpty) {
+        try {
+          bytes = base64Decode(targetFile.fileBase64!);
+        } catch (_) {}
+      } else if (!kIsWeb && targetFile.filePath.isNotEmpty) {
+        try {
+          final fileObj = File(targetFile.filePath);
+          if (await fileObj.exists()) {
+            bytes = await fileObj.readAsBytes();
+          }
+        } catch (_) {}
+      }
+
+      if (bytes != null && bytes.length <= 15 * 1024 * 1024) {
+        final payload = json.encode({
+          'type': 'PORTFOLIO_FILE_DATA',
+          'fileId': fileId,
+          'fileName': targetFile.fileName,
+          'extension': targetFile.fileExtension,
+          'base64': base64Encode(bytes),
+        });
+        final encrypted = await Encryption.encrypt(
+          plaintext: payload,
+          recipientPubkey: requesterPubkey,
+          senderSecretKey: _keys!.secret,
+        );
+        final event = Event.from(
+          kind: 21000,
+          content: encrypted,
+          secretKey: _keys!.secret,
+          tags: [
+            ['p', requesterPubkey],
+            ['t', 'file_response']
+          ],
+        );
+        _publishEventToPool(event);
+        debugPrint('Nostr encrypted file sent: ${targetFile.fileName} (${bytes.length} bytes)');
       }
     }
   }
@@ -890,24 +982,33 @@ class NostrService {
     final fileId = data['fileId'] as String?;
     final fileName = data['fileName'] as String? ?? 'drawing';
     final base64Str = data['base64'] as String?;
-    if (!kIsWeb && fileId != null && base64Str != null) {
-      try {
-        final bytes = base64Decode(base64Str);
-        final appDocDir = await getApplicationDocumentsDirectory();
-        final downloadsDir = Directory('${appDocDir.path}/p2p_downloads');
-        if (!await downloadsDir.exists()) {
-          await downloadsDir.create(recursive: true);
+    if (fileId != null && base64Str != null) {
+      _downloadedFilesBase64[fileId] = base64Str;
+      String? savePath;
+      if (kIsWeb) {
+        PWAHelper.downloadBase64File(base64Str, fileName);
+        savePath = 'web_downloaded';
+      } else {
+        try {
+          final bytes = base64Decode(base64Str);
+          final appDocDir = await getApplicationDocumentsDirectory();
+          final downloadsDir = Directory('${appDocDir.path}/p2p_downloads');
+          if (!await downloadsDir.exists()) {
+            await downloadsDir.create(recursive: true);
+          }
+          final cleanFileName = fileName.replaceAll(RegExp(r'[\\/:*?"<>|]'), '_');
+          savePath = '${downloadsDir.path}/${fileId}_$cleanFileName';
+          final file = File(savePath);
+          await file.writeAsBytes(bytes);
+          debugPrint('Nostr portfolio file saved to $savePath (${bytes.length} bytes)');
+        } catch (e) {
+          debugPrint('Error saving Nostr portfolio file: $e');
         }
-        final savePath = '${downloadsDir.path}/${fileId}_$fileName';
-        final file = File(savePath);
-        await file.writeAsBytes(bytes);
-        debugPrint('Nostr portfolio file saved to $savePath (${bytes.length} bytes)');
-        if (_pendingFileCompleters.containsKey(fileId)) {
-          _pendingFileCompleters[fileId]?.complete(savePath);
-          _pendingFileCompleters.remove(fileId);
-        }
-      } catch (e) {
-        debugPrint('Error saving Nostr portfolio file: $e');
+      }
+
+      if (_pendingFileCompleters.containsKey(fileId)) {
+        _pendingFileCompleters[fileId]?.complete(savePath);
+        _pendingFileCompleters.remove(fileId);
       }
     }
   }
@@ -963,6 +1064,57 @@ class NostrService {
     );
 
     _publishEventToPool(event);
+
+    // 3. Decentralized File Storage on Nostr Relays (Kind 1063 NIP-94)
+    if (profile.role == 'draftsman' && profile.portfolioFiles.isNotEmpty) {
+      unawaited(_publishPortfolioFilesToRelays(profile.portfolioFiles));
+    }
+  }
+
+  Future<void> _publishPortfolioFilesToRelays(List<PortfolioFile> files) async {
+    if (_keys == null) return;
+    for (final file in files) {
+      String? b64 = file.fileBase64;
+      if ((b64 == null || b64.isEmpty) && !kIsWeb && file.filePath.isNotEmpty) {
+        try {
+          final fObj = File(file.filePath);
+          if (await fObj.exists()) {
+            final b = await fObj.readAsBytes();
+            if (b.length <= 15 * 1024 * 1024) {
+              b64 = base64Encode(b);
+            }
+          }
+        } catch (_) {}
+      }
+
+      if (b64 == null || b64.isEmpty) continue;
+
+      const chunkSize = 40 * 1024;
+      final totalChunks = (b64.length / chunkSize).ceil();
+
+      for (int i = 0; i < totalChunks; i++) {
+        final start = i * chunkSize;
+        final end = (start + chunkSize < b64.length) ? start + chunkSize : b64.length;
+        final chunkData = b64.substring(start, end);
+
+        final event = Event.from(
+          kind: 1063,
+          content: chunkData,
+          secretKey: _keys!.secret,
+          tags: [
+            ['f', file.id],
+            ['name', file.fileName],
+            ['ext', file.fileExtension],
+            ['size', file.fileSize.toString()],
+            ['desc', file.description],
+            ['chunk', i.toString(), totalChunks.toString()],
+            ['p', _keys!.public],
+            ['t', 'portfolio_file'],
+          ],
+        );
+        _publishEventToPool(event);
+      }
+    }
   }
 
   /// Scans both LAN and Nostr for draftsmen
@@ -1160,12 +1312,56 @@ class NostrService {
     final existingPath = await getDownloadedFilePath(fileId, fileName);
     if (existingPath != null) return existingPath;
 
+    if (_downloadedFilesBase64.containsKey(fileId)) {
+      if (kIsWeb) {
+        PWAHelper.downloadBase64File(_downloadedFilesBase64[fileId]!, fileName);
+        return 'web_downloaded';
+      }
+    }
+
+    // 2. Query Nostr Relays for Kind 1063 File Chunks (Decentralized Storage)
+    final completer = Completer<String?>();
+    _pendingFileCompleters[fileId] = completer;
+
+    final subId = 'fsub_${DateTime.now().millisecondsSinceEpoch % 100000}';
+    final reqMsg = json.encode([
+      'REQ',
+      subId,
+      {
+        'kinds': [1063],
+        '#f': [fileId],
+        'limit': 60,
+      }
+    ]);
+
+    for (final ws in _activeRelays.values) {
+      try {
+        ws.sink.add(reqMsg);
+      } catch (_) {}
+    }
+
+    // Wait up to 4 seconds for Nostr relay chunks
+    final relayResult = await completer.future.timeout(
+      const Duration(seconds: 4),
+      onTimeout: () => null,
+    );
+
+    if (relayResult != null) {
+      final closeMsg = json.encode(['CLOSE', subId]);
+      for (final ws in _activeRelays.values) {
+        try {
+          ws.sink.add(closeMsg);
+        } catch (_) {}
+      }
+      return relayResult;
+    }
+
     final candidateMeta = _discoveredDraftsmen[draftsmanPeerId] ?? _discoveredDraftsmen[draftsmanPublicKey ?? ''];
     final lanIp = candidateMeta?['lanIp'] as String?;
     final rawKey = draftsmanPublicKey ?? candidateMeta?['publicKey'] as String? ?? candidateMeta?['id'] as String? ?? draftsmanPeerId;
     final pubKey = _cleanHex64(rawKey);
 
-    // 2. Try fast LAN TCP first if IP is known
+    // 3. Try fast LAN TCP if IP is known
     if (!kIsWeb && lanIp != null) {
       try {
         debugPrint('Requesting portfolio file $fileId from LAN $lanIp:$_lanTcpPort...');
@@ -1203,11 +1399,11 @@ class NostrService {
       }
     }
 
-    // 3. Fallback to Nostr Relay E2EE transfer
+    // 4. Fallback to live Kind 21000 Nostr DM
     if (_keys != null && RegExp(r'^[0-9A-Fa-f]{64}$').hasMatch(pubKey)) {
       try {
-        final completer = Completer<String?>();
-        _pendingFileCompleters[fileId] = completer;
+        final dmCompleter = Completer<String?>();
+        _pendingFileCompleters[fileId] = dmCompleter;
 
         final payload = json.encode({
           'type': 'GET_PORTFOLIO_FILE',
@@ -1233,12 +1429,12 @@ class NostrService {
         _publishEventToPool(event);
         debugPrint('Published Nostr file request for $fileId to $pubKey');
 
-        return await completer.future.timeout(const Duration(seconds: 12), onTimeout: () {
+        return await dmCompleter.future.timeout(const Duration(seconds: 10), onTimeout: () {
           _pendingFileCompleters.remove(fileId);
           return null;
         });
       } catch (e) {
-        debugPrint('Nostr file download fallback error: $e');
+        debugPrint('Nostr live DM fallback error: $e');
         _pendingFileCompleters.remove(fileId);
       }
     }

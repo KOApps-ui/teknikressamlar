@@ -222,4 +222,61 @@ void main() {
     expect(nostr.discoveredDraftsmen, isEmpty);
     nostr.clearDiscoveredDraftsmen();
   });
+
+  test('PortfolioFile base64 embedded in public summary for <= 35KB files', () {
+    final now = DateTime.now();
+    final smallBase64 = base64Encode(utf8.encode('small_drawing_preview'));
+    final largeBase64 = base64Encode(List<int>.filled(50 * 1024, 65));
+
+    final profile = UserProfile(
+      id: 'did:ko:tr:test999',
+      name: 'Kemal Test',
+      email: 'kemal@test.com',
+      phone: '+905550000000',
+      role: 'draftsman',
+      branch: 'Makine & İmalat',
+      title: 'Kıdemli Ressam',
+      experienceYears: 5,
+      bio: 'Test bio',
+      softwareSkills: ['AutoCAD'],
+      city: 'İstanbul',
+      publicKey: '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
+      privateKey: 'fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210',
+      authProvider: 'local',
+      createdAt: now,
+      updatedAt: now,
+      portfolioFiles: [
+        PortfolioFile(
+          id: 'file-small',
+          fileName: 'small.png',
+          fileExtension: 'png',
+          filePath: '/data/small.png',
+          fileSize: 1024,
+          uploadDate: now,
+          description: 'Küçük Çizim',
+          fileBase64: smallBase64,
+        ),
+        PortfolioFile(
+          id: 'file-large',
+          fileName: 'large.dwg',
+          fileExtension: 'dwg',
+          filePath: '/data/large.dwg',
+          fileSize: 200000,
+          uploadDate: now,
+          description: 'Büyük Çizim',
+          fileBase64: largeBase64,
+        ),
+      ],
+    );
+
+    final summary = profile.toPublicSummaryMap();
+    final metaList = summary['portfolioMeta'] as List;
+    expect(metaList.length, equals(2));
+
+    final smallMeta = metaList.firstWhere((m) => m['id'] == 'file-small');
+    expect(smallMeta['base64'], equals(smallBase64));
+
+    final largeMeta = metaList.firstWhere((m) => m['id'] == 'file-large');
+    expect(largeMeta.containsKey('base64'), isFalse);
+  });
 }

@@ -1,10 +1,10 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:uuid/uuid.dart';
-import 'package:path_provider/path_provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:file_picker/file_picker.dart';
 import '../../core/models/user_profile.dart';
@@ -1911,47 +1911,48 @@ class _CompanySearchViewState extends State<CompanySearchView> {
                                     ),
                                   ),
                                   const SizedBox(width: 8),
-                                  if (isOfferAccepted && cvBase64 != null && cvBase64.isNotEmpty) ...[
+                                  if (cvBase64 != null && cvBase64.isNotEmpty) ...[
                                     ElevatedButton.icon(
                                       style: ElevatedButton.styleFrom(
                                         backgroundColor: AppTheme.amberSteel,
                                         foregroundColor: AppTheme.blueprintDark,
-                                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+                                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
                                         minimumSize: Size.zero,
                                         tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
                                       ),
-                                      icon: const Icon(Icons.visibility, size: 13),
-                                      label: const Text('CV Aç', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
+                                      icon: const Icon(Icons.description, size: 14),
+                                      label: const Text('CV Görüntüle / İndir', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
                                       onPressed: () async {
-                                        try {
-                                          final tempDir = await getTemporaryDirectory();
-                                          final ext = cvFileName.contains('.') ? cvFileName.split('.').last : 'pdf';
-                                          final tempFile = File('${tempDir.path}/candidate_cv_${DateTime.now().millisecondsSinceEpoch}.$ext');
-                                          await tempFile.writeAsBytes(base64Decode(cvBase64));
-                                          await FileLauncherService.openFile(tempFile.path);
-                                        } catch (e) {
-                                          if (ctx.mounted) {
-                                            ScaffoldMessenger.of(ctx).showSnackBar(
-                                              SnackBar(backgroundColor: AppTheme.statusDanger, content: Text('CV açılamadı: $e')),
-                                            );
-                                          }
+                                        final ok = await FileLauncherService.openBase64(
+                                          base64Content: cvBase64,
+                                          fileName: cvFileName,
+                                          mimeType: cvFileName.endsWith('.pdf') ? 'application/pdf' : 'application/octet-stream',
+                                        );
+                                        if (!ok && ctx.mounted) {
+                                          ScaffoldMessenger.of(ctx).showSnackBar(
+                                            const SnackBar(
+                                              backgroundColor: AppTheme.statusDanger,
+                                              content: Text('CV dosyası açılamadı veya uygun PDF görüntüleyici bulunamadı.'),
+                                            ),
+                                          );
                                         }
                                       },
                                     ),
-                                  ] else ...[
+                                  ] else if (hasCv) ...[
                                     Container(
-                                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
                                       decoration: BoxDecoration(
                                         color: AppTheme.blueprintSurface,
                                         borderRadius: BorderRadius.circular(6),
-                                        border: Border.all(color: AppTheme.amberSteel.withValues(alpha: 0.3)),
+                                        border: Border.all(color: AppTheme.amberSteel.withValues(alpha: 0.5)),
                                       ),
                                       child: const Row(
                                         mainAxisSize: MainAxisSize.min,
                                         children: [
-                                          Icon(Icons.lock_outline, size: 11, color: AppTheme.amberSteel),
+                                          Icon(Icons.hourglass_empty, size: 12, color: AppTheme.amberSteel),
                                           SizedBox(width: 4),
-                                          Text('Teklif Kabulünde Açılır', style: TextStyle(fontSize: 10, color: AppTheme.amberSteel)),
+                                          Text('CV Bekleniyor', style: TextStyle(fontSize: 10, color: AppTheme.amberSteel)),
                                         ],
                                       ),
                                     ),
@@ -2907,6 +2908,7 @@ class CandidatePortfolioFileTile extends StatefulWidget {
 class _CandidatePortfolioFileTileState extends State<CandidatePortfolioFileTile> {
   bool _isDownloading = false;
   String? _localPath;
+  String? _inMemoryBase64;
 
   @override
   void initState() {
@@ -2914,36 +2916,130 @@ class _CandidatePortfolioFileTileState extends State<CandidatePortfolioFileTile>
     _checkLocalFile();
   }
 
+  bool _isImage(String ext) {
+    final e = ext.toLowerCase();
+    return e == 'png' || e == 'jpg' || e == 'jpeg' || e == 'webp';
+  }
+
   Future<void> _checkLocalFile() async {
     final fileId = widget.fileMeta['id'] as String? ?? '';
     final fileName = widget.fileMeta['fileName'] as String? ?? '';
-    var path = await widget.p2pService.getDownloadedFilePath(fileId, fileName);
 
-    // Auto unpack if base64 is already embedded
-    if (path == null && widget.fileMeta['base64'] != null) {
-      try {
-        final bytes = base64Decode(widget.fileMeta['base64'] as String);
-        final appDocDir = await getApplicationDocumentsDirectory();
-        final downloadsDir = Directory('${appDocDir.path}/p2p_downloads');
-        if (!await downloadsDir.exists()) {
-          await downloadsDir.create(recursive: true);
+    // 1. Check if base64 is already embedded
+    if (widget.fileMeta['base64'] != null) {
+      final b64 = widget.fileMeta['base64'] as String;
+      if (b64.isNotEmpty) {
+        if (mounted) {
+          setState(() => _inMemoryBase64 = b64);
         }
-        final savePath = '${downloadsDir.path}/${fileId}_$fileName';
-        final file = File(savePath);
-        await file.writeAsBytes(bytes);
-        path = savePath;
-      } catch (e) {
-        debugPrint('Auto unpack base64 drawing error: $e');
       }
     }
 
-    if (mounted && path != null) {
-      setState(() => _localPath = path);
+    // 2. Check disk if native
+    if (!kIsWeb) {
+      final path = await widget.p2pService.getDownloadedFilePath(fileId, fileName);
+      if (mounted && path != null) {
+        setState(() => _localPath = path);
+      }
     }
   }
 
+  void _showImagePreview(BuildContext context, String base64Data, String fileName) {
+    showDialog(
+      context: context,
+      builder: (ctx) => Dialog(
+        backgroundColor: AppTheme.blueprintDark,
+        insetPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 24),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              child: Row(
+                children: [
+                  const Icon(Icons.image, color: AppTheme.cyanLine, size: 20),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      fileName,
+                      style: const TextStyle(fontWeight: FontWeight.bold, color: AppTheme.textLight, fontSize: 13),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.close, color: AppTheme.textMuted),
+                    onPressed: () => Navigator.of(ctx).pop(),
+                  ),
+                ],
+              ),
+            ),
+            const Divider(height: 1, color: AppTheme.steelBorder),
+            Flexible(
+              child: Container(
+                constraints: const BoxConstraints(maxHeight: 460),
+                color: Colors.black38,
+                child: InteractiveViewer(
+                  minScale: 0.8,
+                  maxScale: 4.0,
+                  child: Center(
+                    child: Image.memory(
+                      base64Decode(base64Data),
+                      fit: BoxFit.contain,
+                      errorBuilder: (context, error, stackTrace) => const Padding(
+                        padding: EdgeInsets.all(32),
+                        child: Text('Görsel yüklenemedi', style: TextStyle(color: AppTheme.statusDanger)),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+            const Divider(height: 1, color: AppTheme.steelBorder),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: [
+                  ElevatedButton.icon(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppTheme.cyanLine,
+                      foregroundColor: AppTheme.blueprintDark,
+                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                    ),
+                    icon: const Icon(Icons.download, size: 16),
+                    label: const Text('Dosyayı İndir', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
+                    onPressed: () {
+                      FileLauncherService.openBase64(base64Content: base64Data, fileName: fileName);
+                    },
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Future<void> _handleFileAction() async {
-    if (_localPath != null && File(_localPath!).existsSync()) {
+    final fileName = widget.fileMeta['fileName'] as String? ?? 'cizim';
+    final ext = (widget.fileMeta['extension'] as String? ?? '').toLowerCase();
+
+    // 1. If we already have base64
+    if (_inMemoryBase64 != null && _inMemoryBase64!.isNotEmpty) {
+      if (_isImage(ext)) {
+        _showImagePreview(context, _inMemoryBase64!, fileName);
+      } else {
+        await FileLauncherService.openBase64(base64Content: _inMemoryBase64!, fileName: fileName);
+      }
+      return;
+    }
+
+    // 2. If already saved on native disk
+    if (!kIsWeb && _localPath != null && File(_localPath!).existsSync()) {
       final ok = await FileLauncherService.openFile(_localPath!);
       if (!ok && mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -2957,42 +3053,11 @@ class _CandidatePortfolioFileTileState extends State<CandidatePortfolioFileTile>
     }
 
     final fileId = widget.fileMeta['id'] as String? ?? '';
-    final fileName = widget.fileMeta['fileName'] as String? ?? 'cizim';
-
-    // Direct Instant Unpack if file was embedded in Nostr profile metadata
-    final base64Content = widget.fileMeta['base64'] as String?;
-    if (base64Content != null && base64Content.isNotEmpty) {
-      try {
-        final bytes = base64Decode(base64Content);
-        final appDocDir = await getApplicationDocumentsDirectory();
-        final downloadsDir = Directory('${appDocDir.path}/p2p_downloads');
-        if (!await downloadsDir.exists()) {
-          await downloadsDir.create(recursive: true);
-        }
-        final savePath = '${downloadsDir.path}/${fileId}_$fileName';
-        final file = File(savePath);
-        await file.writeAsBytes(bytes);
-
-        if (mounted) {
-          setState(() => _localPath = savePath);
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              backgroundColor: AppTheme.statusSuccess,
-              content: Text('$fileName açılıyor...'),
-            ),
-          );
-          await FileLauncherService.openFile(savePath);
-        }
-        return;
-      } catch (e) {
-        debugPrint('Direct base64 decode error: $e');
-      }
-    }
 
     setState(() => _isDownloading = true);
 
     try {
-      final downloadedPath = await widget.p2pService.downloadPortfolioFile(
+      final resultPath = await widget.p2pService.downloadPortfolioFile(
         draftsmanPeerId: widget.draftsmanPeerId,
         draftsmanPublicKey: widget.draftsmanPublicKey,
         fileId: fileId,
@@ -3002,17 +3067,30 @@ class _CandidatePortfolioFileTileState extends State<CandidatePortfolioFileTile>
       if (mounted) {
         setState(() {
           _isDownloading = false;
-          _localPath = downloadedPath;
+          _localPath = resultPath;
         });
 
-        if (downloadedPath != null) {
+        if (resultPath != null) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
               backgroundColor: AppTheme.statusSuccess,
-              content: Text('$fileName başarıyla aktarıldı. Açılıyor...'),
+              content: Text('$fileName başarıyla aktarıldı.'),
             ),
           );
-          await FileLauncherService.openFile(downloadedPath);
+
+          if (!kIsWeb && resultPath != 'web_downloaded' && File(resultPath).existsSync()) {
+            if (_isImage(ext)) {
+              try {
+                final bytes = await File(resultPath).readAsBytes();
+                _inMemoryBase64 = base64Encode(bytes);
+                if (mounted) _showImagePreview(context, _inMemoryBase64!, fileName);
+              } catch (_) {
+                await FileLauncherService.openFile(resultPath);
+              }
+            } else {
+              await FileLauncherService.openFile(resultPath);
+            }
+          }
         } else {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
@@ -3041,7 +3119,8 @@ class _CandidatePortfolioFileTileState extends State<CandidatePortfolioFileTile>
     final ext = (widget.fileMeta['extension'] as String? ?? 'DWG').toLowerCase();
     final size = widget.fileMeta['size'] as int? ?? 0;
     final sizeStr = size > 0 ? FileHelper.formatFileSize(size) : '';
-    final isDownloaded = _localPath != null;
+    final hasData = _inMemoryBase64 != null || _localPath != null;
+    final isImg = _isImage(ext);
     final formattedName = FileHelper.formatFileName(fileName, maxLength: 26);
 
     return Container(
@@ -3051,12 +3130,26 @@ class _CandidatePortfolioFileTileState extends State<CandidatePortfolioFileTile>
         color: AppTheme.blueprintSurface,
         borderRadius: BorderRadius.circular(10),
         border: Border.all(
-          color: isDownloaded ? AppTheme.statusSuccess.withValues(alpha: 0.6) : AppTheme.steelBorder,
+          color: hasData ? AppTheme.statusSuccess.withValues(alpha: 0.6) : AppTheme.steelBorder,
         ),
       ),
       child: Row(
         children: [
-          FileHelper.buildFileIconBadge(ext, size: 40),
+          if (isImg && _inMemoryBase64 != null)
+            ClipRRect(
+              borderRadius: BorderRadius.circular(6),
+              child: SizedBox(
+                width: 40,
+                height: 40,
+                child: Image.memory(
+                  base64Decode(_inMemoryBase64!),
+                  fit: BoxFit.cover,
+                  errorBuilder: (context, error, stackTrace) => FileHelper.buildFileIconBadge(ext, size: 40),
+                ),
+              ),
+            )
+          else
+            FileHelper.buildFileIconBadge(ext, size: 40),
           const SizedBox(width: 10),
           Expanded(
             child: Column(
@@ -3074,10 +3167,10 @@ class _CandidatePortfolioFileTileState extends State<CandidatePortfolioFileTile>
                 const SizedBox(height: 2),
                 if (sizeStr.isNotEmpty)
                   Text(
-                    '$sizeStr ${isDownloaded ? '• Cihaza İndirildi' : '• P2P Hazır'}',
+                    '$sizeStr ${hasData ? '• Hazır' : '• P2P / Nostr'}',
                     style: TextStyle(
                       fontSize: 10,
-                      color: isDownloaded ? AppTheme.statusSuccess : AppTheme.textMuted,
+                      color: hasData ? AppTheme.statusSuccess : AppTheme.textMuted,
                     ),
                   ),
               ],
@@ -3093,14 +3186,22 @@ class _CandidatePortfolioFileTileState extends State<CandidatePortfolioFileTile>
           else
             ElevatedButton.icon(
               style: ElevatedButton.styleFrom(
-                backgroundColor: isDownloaded ? AppTheme.statusSuccess : AppTheme.cyanLine,
+                backgroundColor: hasData ? AppTheme.statusSuccess : AppTheme.cyanLine,
                 foregroundColor: AppTheme.blueprintDark,
                 padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
                 visualDensity: VisualDensity.compact,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
               ),
-              icon: Icon(isDownloaded ? Icons.open_in_new : Icons.download, size: 14),
+              icon: Icon(
+                hasData
+                    ? (isImg ? Icons.visibility : Icons.open_in_new)
+                    : Icons.download,
+                size: 14,
+              ),
               label: Text(
-                isDownloaded ? 'AÇ' : 'İNDİR & AÇ',
+                hasData
+                    ? (isImg ? 'GÖRÜNTÜLE' : 'AÇ / İNDİR')
+                    : 'İNDİR',
                 style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold),
               ),
               onPressed: _handleFileAction,

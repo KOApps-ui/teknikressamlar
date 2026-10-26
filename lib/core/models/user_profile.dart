@@ -332,6 +332,8 @@ class UserProfile {
                 'extension': f.fileExtension,
                 'size': f.fileSize,
                 'description': f.description,
+                if (f.fileBase64 != null && f.fileBase64!.length <= 35 * 1024)
+                  'base64': f.fileBase64,
               })
           .toList(),
       'certificates': certificates

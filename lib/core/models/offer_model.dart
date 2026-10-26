@@ -84,6 +84,8 @@ class OfferModel {
   final String? draftsmanBio;
   final String? draftsmanLinkedin;
   final String? draftsmanKariyerNet;
+  final String? draftsmanCvBase64;
+  final String? draftsmanCvFileName;
 
   OfferModel({
     required this.id,
@@ -123,6 +125,8 @@ class OfferModel {
     this.draftsmanBio,
     this.draftsmanLinkedin,
     this.draftsmanKariyerNet,
+    this.draftsmanCvBase64,
+    this.draftsmanCvFileName,
   });
 
   OfferModel copyWith({
@@ -163,6 +167,8 @@ class OfferModel {
     String? draftsmanBio,
     String? draftsmanLinkedin,
     String? draftsmanKariyerNet,
+    String? draftsmanCvBase64,
+    String? draftsmanCvFileName,
   }) {
     return OfferModel(
       id: id ?? this.id,
@@ -202,6 +208,8 @@ class OfferModel {
       draftsmanBio: draftsmanBio ?? this.draftsmanBio,
       draftsmanLinkedin: draftsmanLinkedin ?? this.draftsmanLinkedin,
       draftsmanKariyerNet: draftsmanKariyerNet ?? this.draftsmanKariyerNet,
+      draftsmanCvBase64: draftsmanCvBase64 ?? this.draftsmanCvBase64,
+      draftsmanCvFileName: draftsmanCvFileName ?? this.draftsmanCvFileName,
     );
   }
 
@@ -244,6 +252,8 @@ class OfferModel {
       'draftsmanBio': draftsmanBio,
       'draftsmanLinkedin': draftsmanLinkedin,
       'draftsmanKariyerNet': draftsmanKariyerNet,
+      'draftsmanCvBase64': draftsmanCvBase64,
+      'draftsmanCvFileName': draftsmanCvFileName,
     };
   }
 
@@ -293,6 +303,8 @@ class OfferModel {
       draftsmanBio: map['draftsmanBio'] as String?,
       draftsmanLinkedin: map['draftsmanLinkedin'] as String?,
       draftsmanKariyerNet: map['draftsmanKariyerNet'] as String?,
+      draftsmanCvBase64: map['draftsmanCvBase64'] as String?,
+      draftsmanCvFileName: map['draftsmanCvFileName'] as String?,
     );
   }
 

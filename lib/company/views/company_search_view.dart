@@ -1404,9 +1404,9 @@ class _CompanySearchViewState extends State<CompanySearchView> {
     final isVerified = candidate['isVerified'] == true || candidate['diplomaBarcode'] != null;
     final badgeText = candidate['verificationBadge'] as String? ?? 'e-Devlet Onaylı Diploma';
     final hasCv = candidate['hasCv'] == true || (candidate['cvFileName'] != null && (candidate['cvFileName'] as String).isNotEmpty);
-    final cvFileName = candidate['cvFileName'] as String? ?? 'Özgeçmiş (CV)';
+    final rawCvFileName = candidate['cvFileName'] as String? ?? 'Özgeçmiş (CV)';
     final cvFileSize = candidate['cvFileSize'] as int?;
-    final cvBase64 = candidate['cvBase64'] as String?;
+    final rawCvBase64 = candidate['cvBase64'] as String?;
 
     final draftsmanId = candidate['id'] as String? ?? candidate['publicKey'] as String? ?? '';
     final draftsmanPubkey = candidate['publicKey'] as String? ?? '';
@@ -1427,6 +1427,8 @@ class _CompanySearchViewState extends State<CompanySearchView> {
     final isOfferPending = activeOffer != null && activeOffer.status == 'pending';
     final draftsmanPhone = activeOffer?.draftsmanPhone;
     final draftsmanEmail = activeOffer?.draftsmanEmail;
+    final cvBase64 = (rawCvBase64 != null && rawCvBase64.isNotEmpty) ? rawCvBase64 : activeOffer?.draftsmanCvBase64;
+    final cvFileName = activeOffer?.draftsmanCvFileName ?? rawCvFileName;
 
     ImageProvider? avatarImg;
     final avatarB64 = candidate['avatarBase64'] as String?;
@@ -1911,7 +1913,7 @@ class _CompanySearchViewState extends State<CompanySearchView> {
                                     ),
                                   ),
                                   const SizedBox(width: 8),
-                                  if (cvBase64 != null && cvBase64.isNotEmpty) ...[
+                                  if (isOfferAccepted && cvBase64 != null && cvBase64.isNotEmpty) ...[
                                     ElevatedButton.icon(
                                       style: ElevatedButton.styleFrom(
                                         backgroundColor: AppTheme.amberSteel,
@@ -1922,7 +1924,7 @@ class _CompanySearchViewState extends State<CompanySearchView> {
                                         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
                                       ),
                                       icon: const Icon(Icons.description, size: 14),
-                                      label: const Text('CV Görüntüle / İndir', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
+                                      label: const Text('CV Aç & İndir', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
                                       onPressed: () async {
                                         final ok = await FileLauncherService.openBase64(
                                           base64Content: cvBase64,
@@ -1945,14 +1947,14 @@ class _CompanySearchViewState extends State<CompanySearchView> {
                                       decoration: BoxDecoration(
                                         color: AppTheme.blueprintSurface,
                                         borderRadius: BorderRadius.circular(6),
-                                        border: Border.all(color: AppTheme.amberSteel.withValues(alpha: 0.5)),
+                                        border: Border.all(color: AppTheme.amberSteel.withValues(alpha: 0.4)),
                                       ),
                                       child: const Row(
                                         mainAxisSize: MainAxisSize.min,
                                         children: [
-                                          Icon(Icons.hourglass_empty, size: 12, color: AppTheme.amberSteel),
+                                          Icon(Icons.lock_outline, size: 12, color: AppTheme.amberSteel),
                                           SizedBox(width: 4),
-                                          Text('CV Bekleniyor', style: TextStyle(fontSize: 10, color: AppTheme.amberSteel)),
+                                          Text('Teklif Kabulünde Açılır', style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: AppTheme.amberSteel)),
                                         ],
                                       ),
                                     ),

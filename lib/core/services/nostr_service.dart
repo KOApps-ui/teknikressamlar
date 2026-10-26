@@ -187,31 +187,89 @@ class NostrService {
     debugPrint('All discovered draftsmen cleared from memory and stream.');
   }
 
-  Future<void> deleteCandidate(String peerId) async {
-    _deletedCandidateIds.add(peerId);
-    _discoveredDraftsmen.remove(peerId);
-    _discoveredCompanies.remove(peerId);
-    await _localDb.addDeletedCandidate(peerId);
+  String cleanHex64(String input) => _cleanHex64(input);
+
+  Future<void> deleteCandidate(String rawId) async {
+    final clean = _cleanHex64(rawId);
+
+    // 1. Add all identifier formats to the in-memory deleted set
+    _deletedCandidateIds.add(rawId);
+    if (clean.isNotEmpty) {
+      _deletedCandidateIds.add(clean);
+      _deletedCandidateIds.add('did:nostr:$clean');
+    }
+
+    // 2. Persist to local database
+    await _localDb.addDeletedCandidate(rawId);
+    if (clean.isNotEmpty && clean != rawId) {
+      await _localDb.addDeletedCandidate(clean);
+      await _localDb.addDeletedCandidate('did:nostr:$clean');
+    }
+
+    // 3. Purge from discovered draftsmen
+    _discoveredDraftsmen.remove(rawId);
+    if (clean.isNotEmpty) {
+      _discoveredDraftsmen.remove(clean);
+      _discoveredDraftsmen.remove('did:nostr:$clean');
+      _discoveredDraftsmen.removeWhere((k, v) {
+        final id = v['id'] as String? ?? '';
+        final pk = v['publicKey'] as String? ?? '';
+        return k == rawId ||
+            k == clean ||
+            id == rawId ||
+            id == clean ||
+            pk == rawId ||
+            pk == clean ||
+            (clean.isNotEmpty && _cleanHex64(pk) == clean) ||
+            (clean.isNotEmpty && _cleanHex64(id) == clean);
+      });
+    }
+
+    // 4. Purge from discovered companies
+    _discoveredCompanies.remove(rawId);
+    if (clean.isNotEmpty) {
+      _discoveredCompanies.remove(clean);
+      _discoveredCompanies.remove('did:nostr:$clean');
+      _discoveredCompanies.removeWhere((k, v) {
+        final id = v['id'] as String? ?? '';
+        final pk = v['publicKey'] as String? ?? '';
+        return k == rawId ||
+            k == clean ||
+            id == rawId ||
+            id == clean ||
+            pk == rawId ||
+            pk == clean ||
+            (clean.isNotEmpty && _cleanHex64(pk) == clean) ||
+            (clean.isNotEmpty && _cleanHex64(id) == clean);
+      });
+    }
+
+    // 5. Notify both streams to immediately update UI
     _safeAddDraftsmen(_discoveredDraftsmen.values.toList());
-    debugPrint('Candidate $peerId permanently removed from discovered list.');
+    _safeAddCompanies(_discoveredCompanies.values.toList());
+
+    debugPrint('Account $rawId ($clean) permanently purged from discovery lists.');
   }
 
-  Future<void> broadcastModerationDelete(String peerId) async {
-    await deleteCandidate(peerId);
+  Future<void> broadcastModerationDelete(String rawId) async {
+    await deleteCandidate(rawId);
     if (_keys == null) return;
     try {
+      final clean = _cleanHex64(rawId);
+      final tags = <List<String>>[
+        ['p', rawId],
+        if (clean.isNotEmpty && clean != rawId) ['p', clean],
+        ['t', 'ko_apps_teknikressam'],
+        ['t', 'moderation_ban'],
+      ];
       final event = Event.from(
         kind: 5,
         content: 'Account removed by KO|Apps admin',
         secretKey: _keys!.secret,
-        tags: [
-          ['p', peerId],
-          ['t', 'ko_apps_teknikressam'],
-          ['t', 'moderation_ban'],
-        ],
+        tags: tags,
       );
       _publishEventToPool(event);
-      debugPrint('Moderation deletion event published to relays for $peerId');
+      debugPrint('Moderation deletion event published to relays for $rawId ($clean)');
     } catch (e) {
       debugPrint('Error broadcasting moderation delete: $e');
     }
@@ -221,6 +279,9 @@ class NostrService {
     _deletedCandidateIds.clear();
     await _localDb.clearDeletedCandidates();
     _discoveredDraftsmen.clear();
+    _discoveredCompanies.clear();
+    _safeAddDraftsmen([]);
+    _safeAddCompanies([]);
     await queryDraftsmen();
     debugPrint('Cleared deleted candidates and rescanning network...');
   }
@@ -647,6 +708,27 @@ class NostrService {
       try {
         final profileData = json.decode(content) as Map<String, dynamic>;
         final role = profileData['role'] as String?;
+        final rawPk = (profileData['publicKey'] as String?)?.isNotEmpty == true
+            ? profileData['publicKey'] as String
+            : (senderPubkey ?? '');
+        final cleanPk = _cleanHex64(rawPk);
+        final rawId = profileData['id'] as String? ?? '';
+        final cleanId = _cleanHex64(rawId);
+        final cleanSender = senderPubkey != null ? _cleanHex64(senderPubkey) : '';
+
+        // Check if this account was deleted / moderated
+        final isDeleted = (senderPubkey != null && _deletedCandidateIds.contains(senderPubkey)) ||
+            (cleanSender.isNotEmpty && _deletedCandidateIds.contains(cleanSender)) ||
+            (rawPk.isNotEmpty && _deletedCandidateIds.contains(rawPk)) ||
+            (cleanPk.isNotEmpty && _deletedCandidateIds.contains(cleanPk)) ||
+            (rawId.isNotEmpty && _deletedCandidateIds.contains(rawId)) ||
+            (cleanId.isNotEmpty && _deletedCandidateIds.contains(cleanId));
+
+        if (isDeleted) {
+          debugPrint('Filtered out profile for deleted account: $rawPk ($cleanPk)');
+          return;
+        }
+
         profileData['id'] = senderPubkey ?? profileData['id'];
         profileData['publicKey'] = senderPubkey ?? profileData['publicKey'];
 
@@ -662,11 +744,9 @@ class NostrService {
         });
 
         if (role == 'company') {
-          final pk = (profileData['publicKey'] as String?)?.isNotEmpty == true
-              ? profileData['publicKey'] as String
-              : (senderPubkey ?? '');
-          if (pk.isNotEmpty) {
-            _discoveredCompanies[pk] = profileData;
+          final key = cleanPk.isNotEmpty ? cleanPk : rawPk;
+          if (key.isNotEmpty) {
+            _discoveredCompanies[key] = profileData;
             _safeAddCompanies(_discoveredCompanies.values.toList());
           }
         } else if (_currentUser?.role != 'draftsman') {
@@ -919,6 +999,8 @@ class NostrService {
       draftsmanBio: data['draftsmanBio'] as String?,
       draftsmanLinkedin: data['draftsmanLinkedin'] as String?,
       draftsmanKariyerNet: data['draftsmanKariyerNet'] as String?,
+      draftsmanCvBase64: data['cvBase64'] as String?,
+      draftsmanCvFileName: data['cvFileName'] as String?,
     );
     _safeAddResponse(data);
     debugPrint('Offer response received for $offerId: $status with contact details');
@@ -1250,6 +1332,8 @@ class NostrService {
       draftsmanBio: draftsmanBio,
       draftsmanLinkedin: draftsmanLinkedin,
       draftsmanKariyerNet: draftsmanKariyerNet,
+      draftsmanCvBase64: status == 'accepted' ? _currentUser?.cvBase64 : null,
+      draftsmanCvFileName: status == 'accepted' ? _currentUser?.cvFileName : null,
     );
     if (_keys == null) return;
 
@@ -1267,6 +1351,8 @@ class NostrService {
       'draftsmanBio': status == 'accepted' ? (draftsmanBio ?? _currentUser?.bio ?? '') : '',
       'draftsmanLinkedin': status == 'accepted' ? (draftsmanLinkedin ?? _currentUser?.linkedinUrl ?? '') : '',
       'draftsmanKariyerNet': status == 'accepted' ? (draftsmanKariyerNet ?? _currentUser?.kariyerNetUrl ?? '') : '',
+      'cvBase64': status == 'accepted' ? (_currentUser?.cvBase64 ?? '') : '',
+      'cvFileName': status == 'accepted' ? (_currentUser?.cvFileName ?? '') : '',
       'timestamp': DateTime.now().toIso8601String(),
     };
 

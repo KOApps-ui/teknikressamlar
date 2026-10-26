@@ -324,7 +324,7 @@ class UserProfile {
       'hasCv': cvFileName != null && cvFileName!.isNotEmpty,
       'cvFileName': cvFileName,
       'cvFileSize': cvFileSize,
-      'cvBase64': (cvBase64 != null && cvBase64!.length <= 300 * 1024) ? cvBase64 : null,
+      'cvBase64': null,
       'portfolioMeta': portfolioFiles
           .map((f) => {
                 'id': f.id,

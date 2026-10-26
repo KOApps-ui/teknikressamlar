@@ -311,6 +311,8 @@ class LocalDbService {
     String? draftsmanBio,
     String? draftsmanLinkedin,
     String? draftsmanKariyerNet,
+    String? draftsmanCvBase64,
+    String? draftsmanCvFileName,
   }) async {
     await _ensureInit();
     final raw = _offersBox?.get(offerId);
@@ -329,6 +331,8 @@ class LocalDbService {
         draftsmanBio: draftsmanBio ?? offer.draftsmanBio,
         draftsmanLinkedin: draftsmanLinkedin ?? offer.draftsmanLinkedin,
         draftsmanKariyerNet: draftsmanKariyerNet ?? offer.draftsmanKariyerNet,
+        draftsmanCvBase64: draftsmanCvBase64 ?? offer.draftsmanCvBase64,
+        draftsmanCvFileName: draftsmanCvFileName ?? offer.draftsmanCvFileName,
         respondedAt: DateTime.now(),
       );
       await saveOffer(updated);

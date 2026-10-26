@@ -114,31 +114,61 @@ class _CompanyAdminViewState extends State<CompanyAdminView> with SingleTickerPr
   }
 
   Future<void> _loadAdminData() async {
-    final deleted = await _localDb.getDeletedCandidates();
-    final draftsmen = _p2pService.discoveredDraftsmen;
+    final deletedList = await _localDb.getDeletedCandidates();
+    final deleted = deletedList.toSet();
 
-    // Combine discovered companies from network with any locally known companies
-    final companiesMap = <String, Map<String, dynamic>>{};
-    for (final c in _p2pService.discoveredCompanies) {
-      final pk = c['publicKey'] as String? ?? c['id'] as String? ?? '';
-      if (pk.isNotEmpty) companiesMap[pk] = c;
+    bool isAccountDeleted(String? id, String? pubkey) {
+      if (id != null && id.isNotEmpty) {
+        if (deleted.contains(id)) return true;
+        final clean = _p2pService.cleanHex64(id);
+        if (clean.isNotEmpty && deleted.contains(clean)) return true;
+      }
+      if (pubkey != null && pubkey.isNotEmpty) {
+        if (deleted.contains(pubkey)) return true;
+        final clean = _p2pService.cleanHex64(pubkey);
+        if (clean.isNotEmpty && deleted.contains(clean)) return true;
+      }
+      return false;
     }
 
+    // Filter draftsmen
+    final draftsmen = _p2pService.discoveredDraftsmen.where((d) {
+      final id = d['id'] as String?;
+      final pk = d['publicKey'] as String?;
+      return !isAccountDeleted(id, pk);
+    }).toList();
+
+    // Filter discovered companies
+    final companiesMap = <String, Map<String, dynamic>>{};
+    for (final c in _p2pService.discoveredCompanies) {
+      final id = c['id'] as String?;
+      final pk = c['publicKey'] as String?;
+      if (isAccountDeleted(id, pk)) continue;
+
+      final key = (pk != null && pk.isNotEmpty) ? pk : (id ?? '');
+      if (key.isNotEmpty) companiesMap[key] = c;
+    }
+
+    // Locally known companies from offers (filter out deleted ones!)
     try {
       final offers = await _localDb.getOffers();
       for (final o in offers) {
-        if (o.companyId.isNotEmpty && !companiesMap.containsKey(o.companyId)) {
-          companiesMap[o.companyId] = {
-            'id': o.companyId,
-            'publicKey': o.companyId,
-            'name': o.companyName,
-            'branch': o.projectTitle.isNotEmpty ? o.projectTitle : 'İşveren Şirket',
-            'city': o.companyCity ?? '',
-            'role': 'company',
-            'isVerified': o.companyIsVerified ?? false,
-            'verificationBadge': o.companyVerificationBadge,
-            'companyLogo': o.companyLogoBase64,
-          };
+        if (o.companyId.isNotEmpty) {
+          if (isAccountDeleted(o.companyId, o.companyId)) continue;
+          final key = o.companyId;
+          if (!companiesMap.containsKey(key)) {
+            companiesMap[key] = {
+              'id': o.companyId,
+              'publicKey': o.companyId,
+              'name': o.companyName,
+              'branch': o.projectTitle.isNotEmpty ? o.projectTitle : 'İşveren Şirket',
+              'city': o.companyCity ?? '',
+              'role': 'company',
+              'isVerified': o.companyIsVerified ?? false,
+              'verificationBadge': o.companyVerificationBadge,
+              'companyLogo': o.companyLogoBase64,
+            };
+          }
         }
       }
     } catch (_) {}
@@ -147,7 +177,7 @@ class _CompanyAdminViewState extends State<CompanyAdminView> with SingleTickerPr
 
     if (mounted) {
       setState(() {
-        _deletedCandidateIds = deleted;
+        _deletedCandidateIds = deletedList;
         _draftsmen = draftsmen;
         _companies = companiesMap.values.toList();
         _auditLogs = logs;
@@ -173,7 +203,8 @@ class _CompanyAdminViewState extends State<CompanyAdminView> with SingleTickerPr
 
   Future<void> _deleteTarget(Map<String, dynamic> target, {required bool isCompany}) async {
     final name = target['name'] as String? ?? 'İsimsiz';
-    final peerId = target['id'] as String? ?? target['publicKey'] as String? ?? '';
+    final rawId = target['id'] as String? ?? '';
+    final rawPk = target['publicKey'] as String? ?? '';
 
     final confirm = await showDialog<bool>(
       context: context,
@@ -196,7 +227,7 @@ class _CompanyAdminViewState extends State<CompanyAdminView> with SingleTickerPr
           ],
         ),
         content: Text(
-          '$name adlı ${isCompany ? "şirket" : "teknik ressam"} kaydı ağdan silinecek ve tüm Nostr rölelerine Kind 5 moderasyon silme sinyali gönderilecektir.\n\nEmin misiniz?',
+          '$name adlı ${isCompany ? "şirket" : "teknik ressam"} kaydı ağdan ve yerel veritabanından kalıcı olarak silinecek, tüm Nostr rölelerine moderasyon silme sinyali gönderilecek ve bu hesabın yeniden gelmesi engellenecektir.\n\nEmin misiniz?',
           style: const TextStyle(color: AppTheme.textMuted, fontSize: 13, height: 1.5),
         ),
         actions: [
@@ -216,14 +247,45 @@ class _CompanyAdminViewState extends State<CompanyAdminView> with SingleTickerPr
       ),
     );
 
-    if (confirm == true && peerId.isNotEmpty) {
-      await _p2pService.broadcastModerationDelete(peerId);
+    if (confirm == true) {
+      setState(() => _isLoading = true);
+
+      // 1. Permanently delete all representations in P2P / Nostr / LocalDb
+      if (rawId.isNotEmpty) {
+        await _p2pService.broadcastModerationDelete(rawId);
+      }
+      if (rawPk.isNotEmpty && rawPk != rawId) {
+        await _p2pService.broadcastModerationDelete(rawPk);
+      }
+
+      // 2. If it's a company, purge associated local offers so they don't resurrect the company
+      if (isCompany) {
+        try {
+          final offers = await _localDb.getOffers();
+          for (final o in offers) {
+            final compId = o.companyId;
+            final cleanCompId = _p2pService.cleanHex64(compId);
+            final cleanTargetPk = rawPk.isNotEmpty ? _p2pService.cleanHex64(rawPk) : '';
+            final cleanTargetId = rawId.isNotEmpty ? _p2pService.cleanHex64(rawId) : '';
+
+            final matches = (rawId.isNotEmpty && (compId == rawId || compId.contains(rawId))) ||
+                (rawPk.isNotEmpty && (compId == rawPk || compId.contains(rawPk))) ||
+                (cleanTargetPk.isNotEmpty && cleanCompId == cleanTargetPk) ||
+                (cleanTargetId.isNotEmpty && cleanCompId == cleanTargetId);
+
+            if (matches) {
+              await _localDb.deleteOffer(o.id);
+            }
+          }
+        } catch (_) {}
+      }
+
       await _loadAdminData();
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             backgroundColor: AppTheme.statusSuccess,
-            content: Text('✓ $name hesabı KO|Apps Admin tarafından ağdan temizlendi.'),
+            content: Text('✓ $name hesabı kalıcı olarak silindi ve engellendi.'),
           ),
         );
       }
@@ -231,7 +293,7 @@ class _CompanyAdminViewState extends State<CompanyAdminView> with SingleTickerPr
   }
 
   Future<void> _purgeJunkAccounts() async {
-    final junkCandidates = _draftsmen.where((c) {
+    bool isJunk(Map<String, dynamic> c) {
       final name = (c['name'] as String? ?? '').trim().toLowerCase();
       final branch = (c['branch'] as String? ?? '').trim().toLowerCase();
       final bio = (c['bio'] as String? ?? '').trim().toLowerCase();
@@ -243,13 +305,17 @@ class _CompanyAdminViewState extends State<CompanyAdminView> with SingleTickerPr
           name.isEmpty ||
           branch == 'null' ||
           (name.contains('test') && bio.isEmpty);
-    }).toList();
+    }
 
-    if (junkCandidates.isEmpty) {
+    final junkCandidates = _draftsmen.where(isJunk).toList();
+    final junkCompanies = _companies.where(isJunk).toList();
+    final totalJunk = junkCandidates.length + junkCompanies.length;
+
+    if (totalJunk == 0) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           backgroundColor: AppTheme.cyanLine,
-          content: Text('Ağda tespit edilen şüpheli veya çöp test hesabı bulunamadı.'),
+          content: Text('Ağda tespit edilen şüpheli veya test hesabı bulunamadı.'),
         ),
       );
       return;
@@ -271,9 +337,9 @@ class _CompanyAdminViewState extends State<CompanyAdminView> with SingleTickerPr
           ],
         ),
         content: Text(
-          'Ağda otomatik olarak ${junkCandidates.length} adet test/çöp kayıt tespit edildi:\n\n'
-          '${junkCandidates.map((c) => '• ${c['name']} (${c['branch']})').join('\n')}\n\n'
-          'Bu kayıtlar ağdan ve tüm rölelerden temizlensin mi?',
+          'Ağda otomatik olarak $totalJunk adet test/çöp kayıt tespit edildi:\n\n'
+          '${[...junkCandidates, ...junkCompanies].map((c) => '• ${c['name']} (${c['role'] == 'company' ? 'Şirket' : c['branch']})').join('\n')}\n\n'
+          'Bu kayıtlar ağdan ve tüm rölelerden kalıcı olarak temizlensin mi?',
           style: const TextStyle(color: AppTheme.textMuted, fontSize: 13, height: 1.5),
         ),
         actions: [
@@ -295,18 +361,38 @@ class _CompanyAdminViewState extends State<CompanyAdminView> with SingleTickerPr
 
     if (confirm == true) {
       setState(() => _isLoading = true);
+
+      // Clean junk draftsmen
       for (final j in junkCandidates) {
-        final id = j['id'] as String? ?? j['publicKey'] as String? ?? '';
-        if (id.isNotEmpty) {
-          await _p2pService.broadcastModerationDelete(id);
-        }
+        final id = j['id'] as String? ?? '';
+        final pk = j['publicKey'] as String? ?? '';
+        if (id.isNotEmpty) await _p2pService.broadcastModerationDelete(id);
+        if (pk.isNotEmpty && pk != id) await _p2pService.broadcastModerationDelete(pk);
       }
+
+      // Clean junk companies & associated offers
+      for (final j in junkCompanies) {
+        final id = j['id'] as String? ?? '';
+        final pk = j['publicKey'] as String? ?? '';
+        if (id.isNotEmpty) await _p2pService.broadcastModerationDelete(id);
+        if (pk.isNotEmpty && pk != id) await _p2pService.broadcastModerationDelete(pk);
+
+        try {
+          final offers = await _localDb.getOffers();
+          for (final o in offers) {
+            if (o.companyId == id || o.companyId == pk || (pk.isNotEmpty && o.companyId.contains(pk))) {
+              await _localDb.deleteOffer(o.id);
+            }
+          }
+        } catch (_) {}
+      }
+
       await _loadAdminData();
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             backgroundColor: AppTheme.statusSuccess,
-            content: Text('✓ ${junkCandidates.length} adet çöp kayıt başarıyla ağdan silindi.'),
+            content: Text('✓ $totalJunk adet test/çöp kayıt kalıcı olarak silindi ve engellendi.'),
           ),
         );
       }
@@ -314,9 +400,17 @@ class _CompanyAdminViewState extends State<CompanyAdminView> with SingleTickerPr
   }
 
   Future<void> _restoreDeleted(String peerId) async {
+    final clean = _p2pService.cleanHex64(peerId);
     await _localDb.unblockUser(peerId);
+    if (clean.isNotEmpty && clean != peerId) {
+      await _localDb.unblockUser(clean);
+    }
     final deleted = await _localDb.getDeletedCandidates();
     deleted.remove(peerId);
+    if (clean.isNotEmpty) {
+      deleted.remove(clean);
+      deleted.remove('did:nostr:$clean');
+    }
     await _localDb.clearDeletedCandidates();
     for (final id in deleted) {
       await _localDb.addDeletedCandidate(id);

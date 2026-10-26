@@ -30,6 +30,7 @@ class P2PService {
   Future<void> scanNetwork() => _nostr.queryDraftsmen();
   Future<void> listenBranch(String branch) => _nostr.queryDraftsmen(branch: branch);
   void clearDiscoveredDraftsmen() => _nostr.clearDiscoveredDraftsmen();
+  String cleanHex64(String input) => _nostr.cleanHex64(input);
   Future<void> deleteCandidate(String candidateId) => _nostr.deleteCandidate(candidateId);
   Future<void> broadcastModerationDelete(String candidateId) => _nostr.broadcastModerationDelete(candidateId);
   Future<void> clearDeletedCandidates() => _nostr.clearDeletedCandidates();

@@ -40,6 +40,7 @@ void main() {
       final publicSummary = profile.toPublicSummaryMap();
       expect(publicSummary['linkedinUrl'], equals('https://linkedin.com/in/canressam'));
       expect(publicSummary['kariyerNetUrl'], equals('https://kariyer.net/ozgecmis/canressam'));
+      expect(publicSummary['cvBase64'], isNull);
       expect(publicSummary.containsKey('privateKey'), isFalse);
     });
 

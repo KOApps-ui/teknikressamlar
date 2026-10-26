@@ -8,7 +8,7 @@ import '../../core/widgets/blueprint_header.dart';
 
 /// Hidden Master Admin Console for KO|Apps Platform Owner.
 /// Features:
-/// - Protected by Master Admin PIN (Default: 1080 / koapps2026) to prevent unauthorized access
+/// - Protected by Master Admin PIN to prevent unauthorized access
 /// - Invisible Monitoring & Network Health
 /// - Real-time Network Audit Logs (Who deleted their account, who registered, P2P telemetry)
 /// - 1-Click Junk/Test Account Cleaner
@@ -644,8 +644,8 @@ class _CompanyAdminViewState extends State<CompanyAdminView> with SingleTickerPr
                     decoration: InputDecoration(
                       labelText: 'Master Güvenlik PIN',
                       labelStyle: const TextStyle(color: AppTheme.amberSteel),
-                      hintText: 'PIN Girin (Örn: 1080)',
-                      hintStyle: const TextStyle(color: AppTheme.textSubtle, letterSpacing: 1),
+                      hintText: '••••',
+                      hintStyle: const TextStyle(color: AppTheme.textSubtle, letterSpacing: 2),
                       prefixIcon: const Icon(Icons.key, color: AppTheme.amberSteel, size: 20),
                       errorText: _pinError,
                       border: OutlineInputBorder(
